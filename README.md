@@ -88,6 +88,32 @@ prompt-cache suffix, so mutations are batched at points where that cost is paid 
 - Each further event needs at least a ladder step (~12 % of the window) of maskable mass. Crossing
   the absolute budget cap (`min(200k, 0.75 × window)`) folds immediately.
 
+### What folds and what doesn't
+
+| Block kind | Ladder behavior | Folded form |
+|---|---|---|
+| `tool_result` | Masked once stale and outside the protected tail | `name → N lines, ~T tok · first line`, plus detected error/risk lines verbatim |
+| `thinking` | Masked once stale and outside the protected tail | `thought · ~T tok · first line` |
+| `text` (assistant reply) | Never masked | Delivered in full |
+| `tool_call` | Never masked | Delivered in full; the action record carries the implicit decision |
+| `user` | Never masked | Delivered in full |
+
+The protected tail (the newest ~N tokens) is exempt regardless of kind, and a result carrying
+non-text parts such as an image is never substituted.
+
+This means context-fold's savings track how much of your history is observations and reasoning
+rather than replies. A session whose context grows mostly from long assistant replies compacts
+very little, by design: those are the conclusions the ladder exists to protect. A thinking-heavy
+session folds hard, provided the provider replays prior-turn thinking into context at all.
+Whether it does varies by provider and model. Claude Opus 4.5 and every 4.6+ model keep prior
+turns' thinking blocks in context and bill them as input, so folding them saves real tokens there;
+Claude Sonnet 4.5, Haiku 4.5, and earlier stripped them server-side
+([thinking block preservation](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#migrating-to-adaptive-thinking)).
+OpenAI reasoning models return reasoning encrypted or omit it, so there is no thinking text in
+the history to fold. The ladder triggers on provider-reported token counts when Pi has them, so it
+will not fire on thinking mass the provider is not counting, though the projected savings figure
+for a fold can overstate what that fold buys on a provider that strips thinking.
+
 ### Ledger-backed recovery
 
 Pi's session file is append-only, so every raw payload stays in it for the life of the session,
