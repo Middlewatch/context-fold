@@ -57,6 +57,14 @@ export interface CacheTelemetrySnapshot {
 	 * exist yet.
 	 */
 	wireDeferredFolds: number;
+	/**
+	 * Every usage report so far booked the whole prompt as cache read with nothing prefilled. A
+	 * stateless API prefills at least the new message every turn (as input or cache write), so this
+	 * shape means the transport keeps the conversation itself (a bridged CLI such as pi-with-claude)
+	 * and Pi's message array is not what goes out as the prompt: a fold would rewrite a copy the
+	 * model never receives. Measured from two reports, so a single odd response cannot set it.
+	 */
+	providerHoldsContext: boolean;
 }
 
 function ratio(cacheRead: number, input: number): number | null {
@@ -86,6 +94,11 @@ export class CacheTelemetry {
 	/** Wire watchdog: the last pre-fold prompt size (cacheRead+input), armed by a masking fold. */
 	private pendingWireBaseline: number | null = null;
 	private wireDeferredFolds = 0;
+	/** Responses that carried any usage at all, and the prompt size of the latest one. A response
+	 *  with every field zero reported nothing (a bridged CLI's tool-pause messages): it is neither a
+	 *  baseline nor a verdict. */
+	private usageTurns = 0;
+	private lastPromptSize = 0;
 
 	/**
 	 * A fold event committed. The *next* recorded turn is the first request carrying the new bytes,
@@ -104,8 +117,7 @@ export class CacheTelemetry {
 		// observing cacheRead ≥ that size proves the rewrite was dropped or deferred downstream.
 		// Only armed when the fold masked something and a prior turn gives a non-zero baseline
 		// (a no-cache provider reports cacheRead 0 and can never false-positive against > 0).
-		const promptSize = this.lastTurn ? this.lastTurn.cacheRead + this.lastTurn.input : 0;
-		if (Number.isFinite(savedTokens) && savedTokens > 0 && promptSize > 0) this.pendingWireBaseline = promptSize;
+		if (Number.isFinite(savedTokens) && savedTokens > 0 && this.lastPromptSize > 0) this.pendingWireBaseline = this.lastPromptSize;
 	}
 
 	/** Record one finalized assistant message's usage. Non-finite fields count as 0. */
@@ -121,6 +133,11 @@ export class CacheTelemetry {
 		this.totals.input += turn.input;
 		this.totals.cacheRead += turn.cacheRead;
 		this.totals.cacheWrite += turn.cacheWrite;
+		// A response with no usage at all reported nothing (a bridged CLI's tool-pause messages):
+		// fold attribution and the wire watchdog wait for the next response that does.
+		if (turn.input + turn.cacheRead + turn.cacheWrite === 0) return;
+		this.usageTurns += 1;
+		this.lastPromptSize = turn.cacheRead + turn.input;
 		this.lastTurnAfterFold = this.pendingFold;
 		if (this.pendingFold) {
 			this.foldReprefillTokens += turn.cacheWrite;
@@ -146,6 +163,8 @@ export class CacheTelemetry {
 		this.lastTurnAfterFold = false;
 		this.pendingWireBaseline = null;
 		this.wireDeferredFolds = 0;
+		this.usageTurns = 0;
+		this.lastPromptSize = 0;
 	}
 
 	snapshot(): CacheTelemetrySnapshot {
@@ -167,6 +186,8 @@ export class CacheTelemetry {
 					? this.foldAccruedSavedTokens - this.foldReprefillTokens
 					: null,
 			wireDeferredFolds: this.wireDeferredFolds,
+			providerHoldsContext:
+				this.usageTurns >= 2 && this.totals.cacheRead > 0 && this.totals.input === 0 && this.totals.cacheWrite === 0,
 		};
 	}
 

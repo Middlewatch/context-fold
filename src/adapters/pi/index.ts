@@ -94,6 +94,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 	let lastContextWindow: number | null = null;
 	let wasCold = false;
 	let warnedWireDeferral = false;
+	let announcedProviderHeld = false;
 	// True when Pi couldn't report a token count this turn (post-compaction window) and the ladder
 	// fell back to its chars÷4 liveTokens estimate — /context-fold marks its usage % with `~` there.
 	let ctxUsageIsEstimate = false;
@@ -131,6 +132,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 	// budget. Everything comes from the ladder's published metrics (env-configured, cold-branch
 	// aware) — never re-derived or hard-coded here.
 	const foldGauge = (m: Record<string, unknown>): string | null => {
+		if (m.provider_holds_context === true) return "folding paused: provider holds the context";
 		if (m.over_budget === true) return "⚠ no more folds possible (over budget)";
 		if (typeof m.usage_fraction !== "number" || typeof m.fold_at !== "number") return null;
 		if (m.usage_fraction < m.fold_at) return `next fold at ${Math.round(m.fold_at * 100)}% ctx`;
@@ -207,6 +209,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 			wasCold = false;
 			lastContextWindow = null;
 			warnedWireDeferral = false;
+			announcedProviderHeld = false;
 			ctxUsageIsEstimate = false;
 		}
 		ensureLedger(ctx);
@@ -313,6 +316,14 @@ export default function contextFold(pi: ExtensionAPI): void {
 			// prefix to protect, so the ladder folds earlier and more freely (measured, not assumed).
 			const t = telemetry.snapshot();
 			ladderPolicy.setCold(t.turns >= 3 && t.totals.cacheRead === 0);
+			// A transport that holds the conversation itself (whole prompt read from cache, nothing
+			// prefilled, two responses running) never receives a fold's rewrite: pause the ladder rather
+			// than commit layers and index records the model can never see.
+			ladderPolicy.setProviderHoldsContext(t.providerHoldsContext);
+			if (debug && t.providerHoldsContext && !announcedProviderHeld) {
+				announcedProviderHeld = true;
+				process.stderr.write("[context-fold] usage shows the transport holds the conversation — folding paused for this session\n");
+			}
 			// Fold-event → seed-index emission. Bound per turn so the emitter sees this ctx's stores.
 			engine.onFoldEvent = (foldEvent) => {
 				try {

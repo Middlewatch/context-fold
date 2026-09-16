@@ -154,6 +154,22 @@ describe("discrete fold events", () => {
 		expect(committed.length).toBe(0);
 	});
 
+	it("provider-held context: the ladder pauses even over the cap, and resumes when the flag clears", () => {
+		const { e, policy, committed } = ladderEngine({ absoluteTokenCap: 10_000 });
+		const { messages } = session(6); // ~29k live, far past a 10k cap
+		policy.setProviderHoldsContext(true);
+		const out = e.process(messages, { contextWindow: 100_000, tokens: 90_000 });
+		expect(out).toBe(messages);
+		expect(committed.length).toBe(0);
+		expect(e.status?.metrics?.provider_holds_context).toBe(true);
+		expect(e.status?.metrics?.over_budget).toBe(false);
+		expect(e.status?.text).toContain("folding paused");
+
+		policy.setProviderHoldsContext(false);
+		e.process(messages, { contextWindow: 100_000, tokens: 90_000 });
+		expect(committed.length).toBe(1);
+	});
+
 	it("cold branch: with no live cache read there is no prefix to protect — folds from 25 %", () => {
 		const { e, policy, committed } = ladderEngine();
 		const { messages } = session(6); // ~29k live → 0.29 of 100k

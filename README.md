@@ -284,6 +284,12 @@ extension. Context-fold watches provider usage for that outcome. Known interacti
   changed prefix forces a full resend, and provider-reported input drops all at once. Folding still
   works (recall, the fold records, and compaction are unaffected), but a long autonomous tool chain can
   approach the provider's context limit before any fold takes effect on the wire.
+- **`pi-with-claude` holds the conversation in its `claude` child.** The bridge sends only new
+  input down the wire, keys its history diff by identity so a fold's in-place mask counts as history
+  already absorbed, and reports the CLI's own occupancy as cache read with nothing prefilled. A fold
+  there rewrites a copy the model never receives. Context-fold recognises that usage shape after two
+  responses and pauses the ladder for the session (footer: `folding paused: provider holds the
+  context`). Recall and the seed index keep working, and the CLI manages the real window itself.
 - **`codex-lite` does not rewrite context.** Its dialect mode replaces Pi's stock tools and appends
   prompt guidance. There is no fold bypass in that pairing; fresh shell output reaches the model
   before it can age into a ladder fold. Focused shell commands still reduce context growth.
@@ -299,7 +305,9 @@ extension. Context-fold watches provider usage for that outcome. Known interacti
 output, the telemetry checks the outcome instead: a fold that masked tokens strictly shrinks the
 outgoing prompt, so if the next turn's provider usage reads the whole pre-fold prompt back from
 cache, the rewrite provably never reached the wire. When that happens the extension warns once per
-session on stderr and raises a flag in `/context-fold` and the footer status line.
+session on stderr and raises a flag in `/context-fold` and the footer status line. A response that
+reports no usage at all (a bridged CLI's tool-pause messages) is skipped rather than judged; the
+watchdog waits for the next response that reports.
 
 ## Install
 

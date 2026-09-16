@@ -231,4 +231,62 @@ describe("wire watchdog", () => {
 		t.reset();
 		expect(t.snapshot().wireDeferredFolds).toBe(0);
 	});
+
+	it("a response reporting no usage at all neither judges nor disarms (a bridged CLI's tool-pause messages)", () => {
+		const t = new CacheTelemetry();
+		t.record({ input: 0, cacheRead: 100_000, cacheWrite: 0 });
+		t.noteFoldEvent(40_000);
+		t.record({ input: 0, cacheRead: 0, cacheWrite: 0 });
+		expect(t.snapshot().wireDeferredFolds).toBe(0);
+		t.record({ input: 0, cacheRead: 130_000, cacheWrite: 0 });
+		expect(t.snapshot().wireDeferredFolds).toBe(1);
+	});
+
+	it("arms against the last response that reported usage, not a usage-less one in between", () => {
+		const t = new CacheTelemetry();
+		t.record({ input: 0, cacheRead: 100_000, cacheWrite: 0 });
+		t.record({ input: 0, cacheRead: 0, cacheWrite: 0 });
+		t.noteFoldEvent(40_000);
+		t.record({ input: 0, cacheRead: 120_000, cacheWrite: 0 });
+		expect(t.snapshot().wireDeferredFolds).toBe(1);
+	});
+});
+
+describe("provider-held context (a fold rewrites a copy the model never receives)", () => {
+	it("two responses booking the whole prompt as cache read with nothing prefilled flag the transport", () => {
+		const t = new CacheTelemetry();
+		t.record({ input: 0, cacheRead: 50_000, cacheWrite: 0 });
+		expect(t.snapshot().providerHoldsContext).toBe(false); // one response is not a pattern
+		t.record({ input: 0, cacheRead: 62_000, cacheWrite: 0 });
+		expect(t.snapshot().providerHoldsContext).toBe(true);
+	});
+
+	it("a stateless provider prefills at least the new message every turn, so any input or write clears it", () => {
+		const t = new CacheTelemetry();
+		t.record({ input: 10_000, cacheRead: 0, cacheWrite: 10_000 });
+		t.record({ input: 2_000, cacheRead: 20_000, cacheWrite: 1_000 });
+		expect(t.snapshot().providerHoldsContext).toBe(false);
+
+		const late = new CacheTelemetry();
+		late.record({ input: 0, cacheRead: 50_000, cacheWrite: 0 });
+		late.record({ input: 0, cacheRead: 62_000, cacheWrite: 0 });
+		late.record({ input: 3_000, cacheRead: 70_000, cacheWrite: 0 });
+		expect(late.snapshot().providerHoldsContext).toBe(false);
+	});
+
+	it("usage-less responses and providers that report nothing never count", () => {
+		const t = new CacheTelemetry();
+		t.record({ input: 0, cacheRead: 0, cacheWrite: 0 });
+		t.record({ input: 0, cacheRead: 0, cacheWrite: 0 });
+		t.record({ input: 0, cacheRead: 50_000, cacheWrite: 0 });
+		expect(t.snapshot().providerHoldsContext).toBe(false);
+	});
+
+	it("reset clears it", () => {
+		const t = new CacheTelemetry();
+		t.record({ input: 0, cacheRead: 50_000, cacheWrite: 0 });
+		t.record({ input: 0, cacheRead: 62_000, cacheWrite: 0 });
+		t.reset();
+		expect(t.snapshot().providerHoldsContext).toBe(false);
+	});
 });

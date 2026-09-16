@@ -620,6 +620,25 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		expect(statuses["context-fold"]).toContain("⚠ no more folds possible (over budget)");
 	});
 
+	it("pauses folding and says so when usage shows the transport holds the conversation", async () => {
+		const s = await load();
+		// A bridged CLI (pi-with-claude) books its whole occupancy as cache read with nothing prefilled,
+		// and its tool-pause responses carry no usage at all.
+		const { ctx, statuses } = ctxFor({ usage: { contextWindow: 80_000, tokens: 70_000 } });
+		const held = (cacheRead: number) => ({ message: { role: "assistant", usage: { input: 0, cacheRead, cacheWrite: 0, output: 50 } } });
+		await s.hooks.get("message_end")!(held(60_000), ctx);
+		await s.hooks.get("message_end")!({ message: { role: "assistant", usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } } }, ctx);
+		await s.hooks.get("message_end")!(held(70_000), ctx);
+
+		// 70k of 80k is past the 60k budget and heavySession has plenty to mask: the cap branch would fire.
+		const messages = heavySession();
+		const out = (await s.hooks.get("context")!({ messages }, ctx)) as { messages: AgentMessage[] };
+		expect(out.messages).toBe(messages);
+		expect(statuses["context-fold"]).toContain("folding paused: provider holds the context");
+		expect(statuses["context-fold"]).not.toContain("×");
+		expect(statuses["context-fold"]).not.toContain("over budget");
+	});
+
 	it("survives a ctx whose ui has no setStatus (headless stubs, older hosts)", async () => {
 		const s = await load();
 		const bare = ctxFor({ usage: { contextWindow: 80_000, tokens: null } }).ctx as { ui?: unknown };

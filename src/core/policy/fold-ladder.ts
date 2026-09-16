@@ -46,6 +46,9 @@ export class FoldLadderPolicy implements FoldPolicy {
 	private host: PolicyHost | null = null;
 	/** No live cache read observed yet (adapter feeds this from measured telemetry each turn). */
 	private cold = false;
+	/** The transport holds the conversation itself, so a fold rewrites a copy the model never receives
+	 *  (adapter feeds this from measured usage, like `cold`). The ladder pauses while it holds. */
+	private providerHoldsContext = false;
 
 	constructor(private cfg: LadderConfig = LADDER_DEFAULTS) {}
 
@@ -60,6 +63,10 @@ export class FoldLadderPolicy implements FoldPolicy {
 
 	setCold(cold: boolean): void {
 		this.cold = cold;
+	}
+
+	setProviderHoldsContext(held: boolean): void {
+		this.providerHoldsContext = held;
 	}
 
 	conduct(view: PolicyView): FoldCommand[] {
@@ -79,6 +86,21 @@ export class FoldLadderPolicy implements FoldPolicy {
 			(view.reportedTokens !== undefined && view.reportedBudget !== undefined && view.reportedTokens > view.reportedBudget);
 		const thresholdHit = cw > 0 && fraction >= foldAt && savings >= stepTokens;
 
+		if (this.providerHoldsContext) {
+			// Nothing this policy masks can reach the model, so even the cap branch stays quiet.
+			this.host?.setStatus("folding paused: the transport holds the conversation, so a fold never reaches the model", {
+				fold_event: false,
+				provider_holds_context: true,
+				usage_fraction: round3(fraction),
+				fold_at: round3(foldAt),
+				maskable_tokens: savings,
+				step_tokens: stepTokens,
+				live_tokens: view.liveTokens,
+				over_budget: false,
+				irreducible_floor: irreducibleFloor(view.blocks),
+			});
+			return [];
+		}
 		if (!overCap && !thresholdHit) {
 			this.publishIdle(view, fraction, foldAt, savings, stepTokens);
 			return [];

@@ -3,6 +3,20 @@ Note: This is largely LLM written, I won't hand write much in here unless I have
 
 Notable changes to context-fold.
 
+## Unreleased
+
+### Fixed
+
+- The ladder pauses on a transport that holds the conversation itself (a bridged CLI such as
+  pi-with-claude): two responses booking the whole prompt as cache read with nothing prefilled
+  mean Pi's message array is not the prompt, so a fold would rewrite a copy the model never
+  receives. Previously the 200k budget cap fired an emergency fold every turn on a 1M-window model
+  there and reported "no more folds possible" for the rest of the session. The footer now reads
+  `folding paused: provider holds the context`.
+- The wire watchdog skips a response that reports no usage at all instead of judging it. A
+  bridged CLI's tool-pause responses carry zero usage, which either disarmed the watchdog or kept
+  it from arming, so folds that never reached the wire went unflagged.
+
 ## 0.5.1 - 2026-09-08
 
 ### Fixed

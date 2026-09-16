@@ -100,6 +100,12 @@ the window, or 25 % when telemetry shows the session has never had a live cache 
 maskable mass is worth at least one ladder step (~12 % of the window). Crossing the budget cap is
 an urgent event regardless of ladder position.
 
+A transport that holds the conversation itself pauses the ladder. Every response from such a
+transport books the whole prompt as cache read with nothing prefilled, where a stateless API
+prefills at least the new message every turn. The adapter measures that from two usage reports and
+feeds the policy a flag, the same way it feeds the cold branch; while it holds, a fold would rewrite
+a copy the model never receives, so even the cap branch stays quiet.
+
 Tool results after the latest assistant response are first-delivery results. That assistant issued
 their calls, and no provider request has received their output yet. They are held regardless of
 tail size or budget pressure. Parallel results are held together. Once a later assistant response
