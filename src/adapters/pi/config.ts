@@ -12,7 +12,10 @@ import { LADDER_DEFAULTS, type LadderConfig } from "../../core/policy/fold-ladde
 /** How the extension answers Pi's hard compaction (`session_before_compact`). */
 export type CompactMode = "det" | "native";
 
-export type KnobValue = number | CompactMode | "on" | "off";
+/** Footer status line: `full` adds the trigger gauge; `compact` shows the count and warnings only. */
+export type FooterFormat = "full" | "compact";
+
+export type KnobValue = number | CompactMode | FooterFormat | "on" | "off";
 
 /** Settings persisted by the /context-fold config menu (same keys in the JSON file). */
 export interface SavedSettings {
@@ -23,6 +26,7 @@ export interface SavedSettings {
 	budgetCap?: number;
 	tail?: number;
 	compact?: CompactMode;
+	footerFormat?: FooterFormat;
 	reconTokens?: number;
 	cacheIdleMinutes?: number;
 	confirmColdPrompt?: "on" | "off";
@@ -155,6 +159,20 @@ export const KNOBS: readonly KnobSpec[] = [
 		format: plain,
 	},
 	{
+		key: "footerFormat",
+		env: "CONTEXTFOLD_FOOTER_FORMAT",
+		label: "Footer format",
+		hint: "full = fold count, masked tokens, and the trigger gauge; compact = count and warnings only",
+		def: "full",
+		choices: ["full", "compact"],
+		live: true,
+		parse: (raw) => {
+			const m = raw.toLowerCase();
+			return m === "full" || m === "compact" ? m : undefined;
+		},
+		format: plain,
+	},
+	{
 		key: "reconTokens",
 		env: "CONTEXTFOLD_RECON_TOKENS",
 		label: "Reconstruction estimate",
@@ -231,12 +249,14 @@ export interface AdapterConfig {
 	/** Reconstruction cost estimate for the reset yellow flag, in input-token equivalents. */
 	reconTokens: number;
 	compact: CompactMode;
+	footerFormat: FooterFormat;
 }
 
 export const ADAPTER_DEFAULTS: AdapterConfig = {
 	ladder: LADDER_DEFAULTS,
 	reconTokens: 18_000,
 	compact: "det",
+	footerFormat: "full",
 };
 
 export function configFromEnv(saved: SavedSettings = {}): Partial<FoldConfig> {
@@ -264,5 +284,6 @@ export function adapterConfigFromEnv(saved: SavedSettings = {}): AdapterConfig {
 	};
 	const reconTokens = resolveKnob(knob("reconTokens"), saved).value as number;
 	const compact = resolveKnob(knob("compact"), saved).value as CompactMode;
-	return { ladder, reconTokens, compact };
+	const footerFormat = resolveKnob(knob("footerFormat"), saved).value as FooterFormat;
+	return { ladder, reconTokens, compact, footerFormat };
 }

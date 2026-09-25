@@ -200,16 +200,17 @@ append-only session file even once the raw message has left live context.
   forced compaction, irreducible context past half the window, cold with a large carry, and recall
   churn. See [Configuration](#configuration) for settings.
 - **Footer status line (TUI)**: a persistent one-line summary in Pi's footer (`⧉ context-fold ×3
-  · ~41k masked · next fold 3.1k/9.6k · cache 66%`), updated as fold events fire. The line is
-  purely visual. It adds nothing to the transcript or the model's context and leaves headless modes
-  unaffected. It is kept short because footers that show every extension's status on one row wrap
-  a long line in narrow or split panes. The middle segment is the ladder's trigger gauge, showing
-  whichever fold condition is actually binding. Below the entry threshold it names it (`next fold
-  at 45%`); once usage is past the threshold, which is permanent from then on, it tracks maskable
-  mass toward the next fold step (`next fold 3.1k/9.6k`, counting up from 0 right after a fold as
-  new observations land). `⚠ over budget` appears only in the terminal state where the irreducible
-  tail and roots exceed the budget and no further fold is possible. `cache` is the whole-session
-  cache hit ratio, unlike Pi's `CH`, which is the last turn only.
+  · ~41k masked · next fold 3.1k/9.6k`), updated as fold events fire. The line is purely visual.
+  It adds nothing to the transcript or the model's context and leaves headless modes unaffected.
+  The last segment is the ladder's trigger gauge, showing whichever fold condition is actually
+  binding. Below the entry threshold it names it (`next fold at 45%`); once usage is past the
+  threshold, which is permanent from then on, it tracks maskable mass toward the next fold step
+  (`next fold 3.1k/9.6k`, counting up from 0 right after a fold as new observations land).
+  `⚠ over budget` appears only in the terminal state where the irreducible tail and roots exceed
+  the budget and no further fold is possible. Footers that stack every extension's status on one
+  row can still wrap in a narrow pane: `CONTEXTFOLD_FOOTER_FORMAT=compact` (or the Footer format
+  menu row) trims the line to the count and the warning states (`⧉ ×3 (~41k) · ⚠ over budget`).
+  Cache hit ratios stay in Pi's own footer and in the `/context-fold` status output.
 - **Fold cost accounting**: once a fold event has fired, the status reports both sides: tokens
   masked per turn against tokens the provider re-prefilled because the fold moved the prefix, plus
   the running net. A fold rewrites history from the earliest masked block forward, so that
@@ -353,6 +354,7 @@ shadowing when it applies.
 | `CONTEXTFOLD_BUDGET_CAP` | `200000` | …capped at this absolute ceiling (attention degrades at absolute depth). `0`/`off` disables. |
 | `CONTEXTFOLD_TAIL` | `20000` | Protected-tail target: the newest ~N tokens never fold (clamped to half the budget). |
 | `CONTEXTFOLD_COMPACT` | `det` | Hard-compaction answer: `det` = deterministic seed-index summary; `native` = Pi stock. |
+| `CONTEXTFOLD_FOOTER_FORMAT` | `full` | Footer status line: `full` = count, masked tokens, and the trigger gauge; `compact` = count and warnings only. |
 | `CONTEXTFOLD_RECON_TOKENS` | `18000` | Reconstruction estimate used by the reset flag (input-token equivalents). |
 | `CONTEXTFOLD_CACHE_IDLE_MINUTES` | `30` | Cache inactivity warning threshold; `off` or `0` disables prediction and send confirmation. |
 | `CONTEXTFOLD_CONFIRM_COLD_PROMPT` | `off` | `on` enables interactive pre-request confirmation. |

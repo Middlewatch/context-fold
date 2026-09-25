@@ -51,6 +51,7 @@ const ENV_KEYS = [
 	"CONTEXTFOLD",
 	"CONTEXTFOLD_COMPACT",
 	"CONTEXTFOLD_FOLD_AT",
+	"CONTEXTFOLD_FOOTER_FORMAT",
 	"CONTEXTFOLD_TAIL",
 	"CONTEXTFOLD_L0",
 	"CONTEXTFOLD_L0_THRESHOLD",
@@ -568,6 +569,21 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		expect(statuses["context-fold"]).toMatch(/next fold 0\/\S+/);
 	});
 
+	it("compact format keeps the count and warnings and drops the progress gauge", async () => {
+		process.env.CONTEXTFOLD_FOOTER_FORMAT = "compact";
+		const s = await load();
+		const { ctx, statuses } = ctxFor({ usage: { contextWindow: 80_000, tokens: null } });
+
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
+		expect(statuses["context-fold"]).toMatch(/^⧉ ×1 \(~\S+\)$/);
+		expect(statuses["context-fold"]).not.toContain("next fold");
+
+		// Warnings still show: past the budget with nothing left to mask is the over-budget state.
+		const over = ctxFor({ usage: { contextWindow: 80_000, tokens: 70_000 } });
+		await s.hooks.get("context_with_system")!({ messages: [user("hi"), assistantText("x".repeat(280_000)), user("more")] }, over.ctx);
+		expect(over.statuses["context-fold"]).toContain("⚠ over budget");
+	});
+
 	it("names the configured entry threshold while usage is still below it", async () => {
 		process.env.CONTEXTFOLD_FOLD_AT = "0.6";
 		const s = await load();
@@ -637,6 +653,8 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		expect(out.messages).toBe(messages);
 		expect(statuses["context-fold"]).toContain("paused: provider holds context");
 		expect(statuses["context-fold"]).not.toContain("×");
+		// The cache hit ratio is Pi's footer's job; three usage reports must not add a cache segment.
+		expect(statuses["context-fold"]).not.toContain("cache");
 		expect(statuses["context-fold"]).not.toContain("over budget");
 	});
 

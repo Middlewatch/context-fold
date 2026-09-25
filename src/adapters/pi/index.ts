@@ -59,6 +59,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 		acfg.ladder = a.ladder;
 		acfg.reconTokens = a.reconTokens;
 		acfg.compact = a.compact;
+		acfg.footerFormat = a.footerFormat;
 		ladderPolicy.setConfig(a.ladder);
 		engine.setConfig({
 			budgetFraction: DEFAULT_CONFIG.budgetFraction,
@@ -131,9 +132,11 @@ export default function contextFold(pi: ExtensionAPI): void {
 	// budget" is reserved for the terminal state where the irreducible floor is over
 	// budget. Everything comes from the ladder's published metrics (env-configured, cold-branch
 	// aware) — never re-derived or hard-coded here.
-	const foldGauge = (m: Record<string, unknown>): string | null => {
+	// The compact footer keeps only the two warning states; the progress gauge is a full-format extra.
+	const foldGauge = (m: Record<string, unknown>, format: "full" | "compact" = "full"): string | null => {
 		if (m.provider_holds_context === true) return "paused: provider holds context";
 		if (m.over_budget === true) return "⚠ over budget";
+		if (format === "compact") return null;
 		if (typeof m.usage_fraction !== "number" || typeof m.fold_at !== "number") return null;
 		if (m.usage_fraction < m.fold_at) return `next fold at ${Math.round(m.fold_at * 100)}%`;
 		if (typeof m.maskable_tokens !== "number" || typeof m.step_tokens !== "number") return null;
@@ -143,18 +146,24 @@ export default function contextFold(pi: ExtensionAPI): void {
 	// Persistent footer status: one keyed line in Pi's footer (TUI renders it below the stats
 	// line; headless modes stub setStatus to a no-op). Updated per turn rather than flashed per
 	// event — the numbers ticking up ARE the fold notification, with no transcript pollution.
-	// Wording stays short: the row is shared with other extensions' statuses in some footers (#1).
+	// Wording stays short: the row is shared with other extensions' statuses in some footers, and
+	// CONTEXTFOLD_FOOTER_FORMAT=compact trims it to the count and warnings (#1). The cache hit ratio
+	// is Pi's own footer's job; the status command still reports the whole-session figure.
 	const updateFooter = (hctx: { ui?: { setStatus?: (key: string, text: string | undefined) => void } }) => {
 		const setStatus = hctx.ui?.setStatus?.bind(hctx.ui);
 		if (!setStatus) return;
 		const s = telemetry.snapshot();
+		const compact = acfg.footerFormat === "compact";
 		const parts = [
 			// The footer labels this line with the extension key, so the text stays name-free.
-			s.foldEvents === 0 ? "⧉ idle" : `⧉ ×${s.foldEvents} · ~${k(s.foldSavedTokens)} masked`,
+			s.foldEvents === 0
+				? "⧉ idle"
+				: compact
+					? `⧉ ×${s.foldEvents} (~${k(s.foldSavedTokens)})`
+					: `⧉ ×${s.foldEvents} · ~${k(s.foldSavedTokens)} masked`,
 		];
-		const gauge = foldGauge(engine.status?.metrics ?? {});
+		const gauge = foldGauge(engine.status?.metrics ?? {}, compact ? "compact" : "full");
 		if (gauge) parts.push(gauge);
-		if (s.hitRatio !== null) parts.push(`cache ${Math.round(s.hitRatio * 100)}%`);
 		if (s.wireDeferredFolds > 0) parts.push("⚠ folds not on wire");
 		setStatus("context-fold", parts.join(" · "));
 	};
@@ -533,6 +542,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 							(saved) => {
 								applySavedSettings(saved);
 								cacheWarning.refresh(cmdCtx);
+								updateFooter(cmdCtx); // a footer-format change shows without waiting for a turn
 							},
 							undefined,
 							cmdCtx.model?.provider,

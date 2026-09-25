@@ -112,6 +112,7 @@ describe("saved settings flow into the config builders", () => {
 		foldAt: 0.35,
 		reconTokens: 9_000,
 		compact: "native",
+		footerFormat: "compact",
 	};
 
 	it("configFromEnv layers saved under env", () => {
@@ -136,6 +137,9 @@ describe("saved settings flow into the config builders", () => {
 		expect(acfg.ladder.foldStep).toBe(0.12);
 		expect(acfg.compact).toBe("native");
 		expect(acfg.reconTokens).toBe(9_000);
+		expect(acfg.footerFormat).toBe("compact");
+		expect(knob("footerFormat").parse("Full")).toBe("full");
+		expect(knob("footerFormat").parse("wide")).toBeUndefined();
 	});
 });
 

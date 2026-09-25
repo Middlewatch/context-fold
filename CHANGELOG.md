@@ -11,9 +11,18 @@ Notable changes to context-fold.
 - Hard-compaction summaries re-extract the active branch's compacted history with current
   context edits applied, rather than replaying archival index records or previous summaries.
 - Shorter footer status line, so it fits a footer row shared with other extensions in narrow or
-  split panes (#1): `⧉ ×3 · ~7.9k masked · ⚠ over budget · cache 100%` replaces
+  split panes (#1): `⧉ ×3 · ~7.9k masked · ⚠ over budget` replaces
   `⧉ ×3 · ~7.9k tok masked · ⚠ no more folds possible (over budget) · cache avg 100%`. The trigger
   gauge now reads `next fold at 45%`, `next fold 3.1k/9.6k`, and `paused: provider holds context`.
+  The `cache avg` segment is gone: Pi's own footer reports the cache hit rate, and a second, differently
+  computed figure beside it confused more than it informed. `/context-fold` status still shows the
+  whole-session ratio.
+
+### Added
+
+- `CONTEXTFOLD_FOOTER_FORMAT` / the **Footer format** menu row: `full` (default) keeps the trigger
+  gauge; `compact` trims the footer to the fold count and the warning states
+  (`⧉ ×3 (~7.9k) · ⚠ over budget`) for footers that stack several extensions on one row (#1).
 
 ### Fixed
 
