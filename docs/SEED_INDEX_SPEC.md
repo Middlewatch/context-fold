@@ -31,6 +31,12 @@ the span's anchor (`r:<toolCallId>` names a `toolResult` message's
 with that `responseId`) and verifying the text against the span's `sha256`.
 The index itself carries only metadata.
 
+A Pi content replacement appends `:edit:<entryId>` to the original block anchor. Resolve that
+`context_edit` entry, apply its replacement content to the original source message, and select
+the named block before verifying its sha256. The suffix names a specific persisted edit rather
+than whichever edit is currently active. Original anchors keep their existing meaning, and
+replacement spans omit `fullOutputPath` because the original tool file does not contain the edit.
+
 ## Transport
 
 One JSONL file per session, append-only: one record per fold event (plus one
@@ -83,7 +89,9 @@ Field semantics:
   voids the `fold-index` records with that seq appended before it (a compaction
   that failed after its record was emitted); a record appended after the
   retraction may reuse the seq and stands on its own.
-- `trigger`: why this fold fired.
+- `trigger`: why this fold fired. A `compact` record re-extracts all compacted history on the
+  active branch, including earlier compacted spans, with current replacements and omissions
+  applied. Its capped fields favor recent blocks, even within one user turn. Prior records remain archival.
 - `files`: every path the folded span touched: tool inputs (read/edit/write
   targets) and path-shaped tokens inside outputs. Repo-relative when
   resolvable, absolute otherwise. Deduplicated, insertion order.
@@ -130,6 +138,9 @@ are inert.
   spans (or scripted scans over them) rather than one pointer at a time.
 - The index is ground truth extracted verbatim; any narrative a reader layers
   on top of it is the reader's own.
+- Automatic compaction renders only its newly re-extracted record. A union of historical
+  records may contain material omitted or replaced later and is suitable for archival lookup,
+  not an unfiltered view of current context.
 - Records are advisory for context reconstruction, so readers verify claims
   against the session ledger (via `blockId` and `sha256`) before relying on
   them.

@@ -44,7 +44,7 @@
     "prepublishOnly": "npm run typecheck && npm run test"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.80.4",
+    "@earendil-works/pi-coding-agent": ">=0.87.1",
     "typebox": "*"
   },
   "peerDependenciesMeta": {
@@ -56,7 +56,7 @@
     }
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
     "@types/node": "^26.0.1",
     "typescript": "^5.6.0",
     "vitest": "^4.1.10"

@@ -1,7 +1,7 @@
 /*
  * index.ts — the context-fold Pi extension entry point.
  *
- * Wires the folding policy into Pi's per-turn `context` hook: before every model call Pi hands
+ * Wires the folding policy into Pi's per-turn `context_with_system` hook: before every model call Pi hands
  * us a deep copy of the outgoing message array; we replace the content of stale blocks with
  * short reversible digests and return it. The real session history is never touched — folding
  * lives only in the outgoing copy. The agent pulls any folded block back with the
@@ -20,10 +20,10 @@ import { ContextFoldEngine, DEFAULT_CONFIG } from "./store";
 import { SeedIndexStore, emitFoldIndex, emitCompactIndex, recordCompactedBlocks } from "./index-store";
 import { renderDetCompactionSummary } from "./compact";
 import { registerHandoffCommand } from "./handoff";
-import { linearize, type WireBlock } from "../../core/block";
+import { linearize } from "../../core/block";
 import { registerFoldTools } from "./unfold-tool";
 import { MapFoldRegistry } from "../../core/fold-registry";
-import { LedgerReader } from "./ledger";
+import { LedgerReader, compactionHistory, contextRevisions, reviseBlocks } from "./ledger";
 import { recordFoldEntry, recordLayer, recordUnfold, restoreFoldState } from "./persistence";
 import { CacheTelemetry, k } from "./cache-telemetry";
 import { advise } from "./advisor";
@@ -308,7 +308,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 	});
 
 	// The make-or-break hook: rewrite the outgoing context before each model call.
-	pi.on("context", (event, ctx) => {
+	pi.on("context_with_system", (event, ctx) => {
 		try {
 			ensureLedger(ctx);
 			lastContextWindow = ctx.getContextUsage()?.contextWindow ?? lastContextWindow;
@@ -353,7 +353,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 			const messages = engine.process(event.messages as unknown as CoreAgentMessage[], {
 				contextWindow: usage?.contextWindow ?? null,
 				tokens: usage?.tokens ?? null,
-			});
+			}, contextRevisions(ctx.sessionManager.getBranch()));
 			// The cast is the pure/effectful boundary (core/block.ts): the core's structural AgentMessage
 			// models exactly the fields the bridge reads, and Pi's real AgentMessage satisfies it.
 			updateFooter(ctx); // reflect a fold committed this turn (and the fresh trigger gauge)
@@ -377,13 +377,14 @@ export default function contextFold(pi: ExtensionAPI): void {
 	// HARD COMPACTION (the hard floor): the automatic path NEVER summarizes with a model. With
 	// CONTEXTFOLD_COMPACT=det (default) we hand Pi a deterministic summary rendered verbatim from
 	// the seed index — no hallucination surface, every listed token a lexical hook for recall —
-	// after emitting one final "compact" index record for the span leaving live history.
+	// after re-extracting one "compact" index record from the active branch's compacted history.
 	// CONTEXTFOLD_COMPACT=native leaves Pi's own compaction untouched. Fail-open: any error here
 	// falls through to Pi's default behavior.
 	pi.on("session_before_compact", (event, ctx) => {
 		if (acfg.compact !== "det") return;
 		try {
-			const prep = (event as { preparation: { messagesToSummarize: unknown[]; turnPrefixMessages: unknown[]; tokensBefore: number; firstKeptEntryId: string; previousSummary?: string } }).preparation;
+			const prep = event.preparation;
+			const branch = event.branchEntries ?? ctx.sessionManager.getBranch();
 			ensureLedger(ctx);
 			const index = indexFor(ctx);
 			// Pi hands a mid-turn cut over in TWO arrays and drops BOTH from live history:
@@ -398,7 +399,10 @@ export default function contextFold(pi: ExtensionAPI): void {
 				...(prep.messagesToSummarize ?? []),
 				...(prep.turnPrefixMessages ?? []),
 			] as unknown as CoreAgentMessage[];
-			const blocks = linearize(leaving) as unknown as WireBlock[];
+			// Rebuild prior compacted evidence from raw branch entries with their current edits.
+			// An old index or summary can otherwise reintroduce omitted/replaced content.
+			const blocks = compactionHistory(branch, prep.firstKeptEntryId)
+				?? reviseBlocks(linearize(leaving), contextRevisions(branch));
 			// Record-at-compaction: blocks leaving live history that never folded get codes and fold
 			// records too — the compact record below then carries recovery spans for the whole span,
 			// and recall resolves them from the ledger.
@@ -426,9 +430,8 @@ export default function contextFold(pi: ExtensionAPI): void {
 			engine.ensureLayerSeqAtLeast(compactRecord.seq);
 			pendingCompactSeq = compactRecord.seq;
 			const summary = renderDetCompactionSummary({
-				records: index.readAll(),
+				records: [compactRecord],
 				sessionFilePath: ctx.sessionManager.getSessionFile?.(),
-				previousSummary: prep.previousSummary,
 			});
 			if (debug)
 				process.stderr.write(`[context-fold] det compaction: ${prep.tokensBefore} tok summarized deterministically (no model)\n`);
@@ -447,15 +450,9 @@ export default function contextFold(pi: ExtensionAPI): void {
 		compactions++;
 		pendingCompactSeq = null;
 	});
-	// `session_compact_failed` postdates Pi 0.84 (whose typings this build pins); on an older
-	// engine the handler simply never fires and a failed compaction keeps its premature record.
-	// Registered through a plain-string signature so both versions load.
-	const onAny = pi.on as unknown as (name: string, handler: (event: unknown, ctx: unknown) => unknown) => void;
-	onAny("session_compact_failed", (event, rawCtx) => {
-		const ctx = rawCtx as { sessionManager: { getSessionDir(): string; getSessionId(): string } };
-		const e = event as { reason?: string; errorMessage?: string; aborted?: boolean };
-		const why = e.aborted ? "aborted" : (e.errorMessage ?? "failed");
-		process.stderr.write(`[context-fold] compaction (${e.reason ?? "?"}) did not complete (${why}) — not counted\n`);
+	pi.on("session_compact_failed", (event, ctx) => {
+		const why = event.aborted ? "aborted" : (event.errorMessage ?? "failed");
+		process.stderr.write(`[context-fold] compaction (${event.reason}) did not complete (${why}) - not counted\n`);
 		if (pendingCompactSeq === null) return;
 		try {
 			indexFor(ctx).appendRetraction(pendingCompactSeq);

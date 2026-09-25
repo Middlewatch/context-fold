@@ -51,9 +51,9 @@ deliberately outside `npm test`. Run them only when the folding path itself chan
 
 - **`typebox` and `@earendil-works/*` are peer dependencies, never vendored.** Pi injects bundled
   virtual modules at runtime, so a separately installed copy is not the one the engine uses.
-- **Hook composition is Pi-version-sensitive.** Current Pi 0.83+ chains `context` transforms as
-  middleware, while older builds used last-wins dispatch. `session_before_compact` still selects one
-  result. See the versioned collision table in `docs/pi-api-surface.md`.
+- **Pi 0.87.1 is the minimum.** Folding uses `context_with_system` so system patches and tool
+  declarations keep their positions. Ordinary `context` handlers can collapse that state when
+  they replace messages. `session_before_compact` selects one result. See `docs/pi-api-surface.md`.
 - **Every hook is fail-open.** A defect should cost one result's folding or one turn's folding
   rather than the turn itself. Preserve that when adding code to a hook.
 

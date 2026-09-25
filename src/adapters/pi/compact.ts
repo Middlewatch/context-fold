@@ -18,15 +18,12 @@ const CAP_COMMANDS = 24;
 const CAP_ERRORS = 24;
 const CAP_IDENTIFIERS = 80;
 const CAP_SPANS = 30;
-const CAP_PREVIOUS_SUMMARY_CHARS = 4_000;
 
 export interface DetCompactionInput {
 	records: SeedIndexRecord[];
 	/** The session's JSONL file — the append-only ledger holding every raw payload (named so the
 	 *  agent can grep it directly if tools allow). */
 	sessionFilePath?: string;
-	/** Pi's previous compaction summary, carried verbatim as untrusted narrative. */
-	previousSummary?: string;
 }
 
 export function renderDetCompactionSummary(input: DetCompactionInput): string {
@@ -70,13 +67,6 @@ export function renderDetCompactionSummary(input: DetCompactionInput): string {
 	if (spans.length) {
 		parts.push("", "## Recovery pointers");
 		for (const s of spans) parts.push(`- {#${s.code ?? "?"} FOLDED} ${s.tool ?? "?"} · turn ${s.turn} · ${s.log.lines} lines`);
-	}
-	if (input.previousSummary?.trim()) {
-		parts.push(
-			"",
-			"## Carried summary from an earlier compaction (UNTRUSTED narrative — verify against the log before relying on it)",
-			input.previousSummary.trim().slice(0, CAP_PREVIOUS_SUMMARY_CHARS),
-		);
 	}
 	return parts.join("\n");
 }

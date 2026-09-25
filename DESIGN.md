@@ -69,21 +69,27 @@ Keeping them apart is what lets fold timing change without touching the rewrite.
 
 ## 3. The per-turn pipeline
 
-Pi's `context` hook fires before every model call with a deep copy of the outgoing
-`AgentMessage[]`. Pi sends the returned array. Each turn follows this pipeline:
+Pi's `context_with_system` hook receives the full outgoing transcript after ordinary `context`
+handlers. Context-fold preserves system messages and tool declarations in place, including
+mid-run patches. Using ordinary `context` would cause Pi to collapse those patches whenever
+folding clones a message. Each request follows this pipeline:
 
 ```
-on "context" (messages, ctx):
-  blocks   = linearize(messages)                  # provider messages → typed Block[]
+on "context_with_system" (messages, ctx):
+  revisions = contextRevisions(activeBranch)      # latest content edits on this branch
+  blocks   = reviseBlocks(linearize(messages), revisions)
   frozen   = computeFrozenOps(blocks)             # committed layer bytes (every turn)
   view     = buildView(blocks, protect, budget, …)
   cmds     = policy.conduct(view)                 # the fold ladder; [] = nothing to do
   ops      = lower(cmds, blocks, protect)         # FoldCommand[] → FoldOp[]
   commit(ops)                                     # freeze as a layer, emit the seed index
-  return applyPlan(messages, merge(frozen, ops))
+  return applyPlan(messages, wireIds(merge(frozen, ops), revisions))
 ```
 
-Frozen bytes outrank any late policy op for the same id.
+Frozen bytes outrank any late policy op for the same revision. Replacement blocks append
+`:edit:<entryId>` to the original durable ID. The adapter translates revised IDs back to wire
+positions only when applying substitutions; Pi's message metadata remains unchanged. Digest
+caching compares exact source text rather than text length.
 
 ---
 
@@ -142,7 +148,7 @@ fails the sha check, produces a typed error naming the code. If the block is sti
 history, recall serves it from the snapshot instead, through the same caps.
 
 One documented edge follows from verifying against the ledger: the fold-time sha is computed over
-the text the `context` hook saw, and Pi chains context transforms, so a block another extension
+the text the `context_with_system` hook saw, and Pi chains context transforms, so a block another extension
 rewrote before folding diverges from the raw persisted bytes. While the block is live, recall
 serves it from the snapshot with a warning; once it leaves history, recall reports the sha
 mismatch as a typed error rather than serving bytes the model never saw as if they were the
@@ -158,6 +164,20 @@ session, and announced on stderr, while the rest of the event commits. At hard c
 foldable block leaving live history that never folded gets a code and a fold record then
 (per-block fail-open), so the recall route covers the entire compacted span rather than only the
 blocks earlier fold events reached.
+
+Pi content replacements are themselves immutable ledger entries. Recall indexes each recorded
+revision separately by projecting that edit onto its original source entry. Original IDs and
+handles retain their meaning; navigating before an edit selects the original identity again.
+Edited results never inherit the original tool's full-output recall route.
+
+Automatic compaction re-extracts its evidence from the active branch before the kept boundary,
+applying the branch's latest edits even to previously compacted source entries. It renders only
+that new index record, rather than merging archival records or carrying previous summaries with
+untraceable evidence. Per-block extraction retains recent evidence within the field caps, including within one long
+user turn. Pi owns
+the system/tool checkpoint and the kept boundary, including recovery metadata and retain-none
+compactions. Its threshold check uses canonical context before request-local folding, so the
+fold ladder cannot be assumed to prevent that check.
 
 ## 6. Fold-state persistence
 
@@ -213,8 +233,8 @@ session.
 1. **Only durable ids may be folded.** Ids prefixed `u:`/`a:`/`r:`/`s:` are content-anchored and
    stable; positional `m<i>:…` ids re-point once folding makes the array non-append-only. The
    `isDurableId` gate is separate from the kind-based `wireFoldable` gate and stays that way.
-   Recovery depends on it: the ledger route re-locates a folded block by recomputing exactly
-   these ids over `getEntries()`, so an id that could drift would strand its content.
+   Content edits add a durable `:edit:<entryId>` revision suffix. Recovery depends on recomputing
+   the original ID and the same suffix over `getEntries()`; positional IDs remain ineligible.
 2. **The engine is the sole author of the `{#code}` tag.** Strip any tag a policy supplies and
    prepend the authoritative one.
 3. **Single disposition.** Each block id appears in at most one op.

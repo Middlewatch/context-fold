@@ -13,7 +13,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { extractIndex, buildIndexRecord, type IndexSpan, type SeedIndexRecord } from "../../core/index/seed-index";
+import { extractIndex, extractCompactionIndex, buildIndexRecord, type IndexSpan, type SeedIndexRecord } from "../../core/index/seed-index";
 import { foldCode, wireFoldable } from "../../core/digest";
 import { isDurableId, type WireBlock } from "../../core/block";
 import type { FoldEventReport } from "./store";
@@ -280,7 +280,7 @@ export function emitCompactIndex(
 				fraction: cw > 0 ? Math.round((deps.tokensBefore / cw) * 1000) / 1000 : 0,
 			},
 		},
-		extractIndex({ masked: masked, all: blocks }),
+		extractCompactionIndex(blocks),
 		spans,
 	);
 	deps.index.append(record);

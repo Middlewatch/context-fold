@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { user, assistantText, assistantWithCalls, bigResult, toolResult } from "./helpers";
 import type { AgentMessage } from "../src/core/block";
 
-const PI_PRESENT = existsSync(resolve(__dirname, "../node_modules/@earendil-works/pi-coding-agent/node_modules/typebox"));
+const PI_PRESENT = existsSync(resolve(__dirname, "../node_modules/@earendil-works/pi-coding-agent/package.json"));
 
 type Hook = (event: unknown, ctx: unknown) => unknown;
 interface Entry {
@@ -90,6 +90,7 @@ function ctxFor(
 				getSessionDir: () => dir,
 				getSessionId: () => opts.sessionId ?? "s1",
 				getEntries: () => [...(opts.messages ?? []).map((m) => ({ type: "message", message: m })), ...(opts.entries ?? [])],
+				getBranch: () => [...(opts.messages ?? []).map((m) => ({ type: "message", message: m })), ...(opts.entries ?? [])],
 			},
 			getContextUsage: () => opts.usage ?? { contextWindow: 200_000, tokens: null },
 			ui: {
@@ -134,7 +135,7 @@ describe.skipIf(!PI_PRESENT)("context hook", () => {
 			bigResult("fresh", 500),
 		];
 
-		const out = (await s.hooks.get("context")!({ messages }, ctx)) as { messages: AgentMessage[] };
+		const out = (await s.hooks.get("context_with_system")!({ messages }, ctx)) as { messages: AgentMessage[] };
 		expect(out.messages).toBe(messages);
 		expect(JSON.stringify(out.messages)).not.toContain("FOLDED");
 		expect(s.hooks.has("tool_result")).toBe(false);
@@ -146,7 +147,7 @@ describe.skipIf(!PI_PRESENT)("context hook", () => {
 		const { ctx } = ctxFor({ usage: { contextWindow: 80_000, tokens: null } });
 		const messages = heavySession();
 
-		const out = (await s.hooks.get("context")!({ messages }, ctx)) as { messages: AgentMessage[] };
+		const out = (await s.hooks.get("context_with_system")!({ messages }, ctx)) as { messages: AgentMessage[] };
 		const folded = out.messages.filter((m) => JSON.stringify(m).includes("FOLDED"));
 
 		expect(folded.length).toBeGreaterThan(0);
@@ -165,7 +166,7 @@ describe.skipIf(!PI_PRESENT)("context hook", () => {
 			},
 		};
 
-		const out = (await s.hooks.get("context")!({ messages }, broken)) as { messages: AgentMessage[] };
+		const out = (await s.hooks.get("context_with_system")!({ messages }, broken)) as { messages: AgentMessage[] };
 		expect(out.messages).toBe(messages); // fail-open: the same array, unfolded
 	});
 
@@ -183,7 +184,7 @@ describe.skipIf(!PI_PRESENT)("context hook", () => {
 		}) as typeof process.stderr.write;
 		try {
 			const messages = heavySession();
-			const out = (await s.hooks.get("context")!({ messages }, ctx)) as { messages: AgentMessage[] };
+			const out = (await s.hooks.get("context_with_system")!({ messages }, ctx)) as { messages: AgentMessage[] };
 			expect(JSON.stringify(out.messages)).not.toContain("FOLDED");
 			expect(s.entries.some((entry) => (entry.data as { kind?: string }).kind === "layer")).toBe(false);
 		} finally {
@@ -198,7 +199,7 @@ describe.skipIf(!PI_PRESENT)("session_start hook", () => {
 		const first = await load();
 		const { ctx } = ctxFor({ usage: { contextWindow: 80_000, tokens: null } });
 		const messages = heavySession();
-		await first.hooks.get("context")!({ messages }, ctx);
+		await first.hooks.get("context_with_system")!({ messages }, ctx);
 		expect(first.entries.some((entry) => (entry.data as { kind?: string }).kind === "fold")).toBe(true);
 		expect(first.entries.some((entry) => (entry.data as { kind?: string }).kind === "layer")).toBe(true);
 
@@ -208,7 +209,7 @@ describe.skipIf(!PI_PRESENT)("session_start hook", () => {
 		const resumedCtx = ctxFor({ entries: ledger, usage: { contextWindow: 80_000, tokens: null } }).ctx;
 		await resumed.hooks.get("session_start")!({}, resumedCtx);
 
-		const out = (await resumed.hooks.get("context")!({ messages }, resumedCtx)) as { messages: AgentMessage[] };
+		const out = (await resumed.hooks.get("context_with_system")!({ messages }, resumedCtx)) as { messages: AgentMessage[] };
 		expect(JSON.stringify(out.messages)).toContain("FOLDED");
 	});
 
@@ -216,7 +217,7 @@ describe.skipIf(!PI_PRESENT)("session_start hook", () => {
 		const s = await load();
 		const firstCtx = ctxFor({ sessionId: "s1", usage: { contextWindow: 80_000, tokens: null } }).ctx;
 		await s.hooks.get("session_start")!({}, firstCtx);
-		await s.hooks.get("context")!({ messages: heavySession() }, firstCtx);
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, firstCtx);
 		const foldRecord = s.entries.find((entry) => (entry.data as { kind?: string }).kind === "fold")!;
 		const code = (foldRecord.data as { entry: { code: string } }).entry.code;
 
@@ -282,7 +283,7 @@ describe.skipIf(!PI_PRESENT)("session_before_compact hook", () => {
 		const { ctx } = ctxFor({ usage: { contextWindow: 80_000, tokens: null } });
 
 		// Drive a fold event first so the seed index has something to render from.
-		await s.hooks.get("context")!({ messages: heavySession() }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 
 		const prep = {
 			messagesToSummarize: heavySession(),
@@ -299,11 +300,11 @@ describe.skipIf(!PI_PRESENT)("session_before_compact hook", () => {
 		expect(out.compaction.summary).toContain("no model involved");
 	});
 
-	it("carries a previous summary forward but marks it untrusted", async () => {
+	it("does not carry an untraceable previous summary into automatic context", async () => {
 		process.env.CONTEXTFOLD_COMPACT = "det";
 		const s = await load();
 		const { ctx } = ctxFor({ usage: { contextWindow: 80_000, tokens: null } });
-		await s.hooks.get("context")!({ messages: heavySession() }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 
 		const out = (await s.hooks.get("session_before_compact")!(
 			{
@@ -318,8 +319,8 @@ describe.skipIf(!PI_PRESENT)("session_before_compact hook", () => {
 			ctx,
 		)) as { compaction: { summary: string } };
 
-		expect(out.compaction.summary).toContain("An earlier model wrote this.");
-		expect(out.compaction.summary).toContain("UNTRUSTED");
+		expect(out.compaction.summary).not.toContain("An earlier model wrote this.");
+		expect(out.compaction.summary).not.toContain("UNTRUSTED");
 	});
 
 	// Pi splits a mid-turn cut into TWO arrays: `messagesToSummarize` (whole turns before the
@@ -455,7 +456,7 @@ describe.skipIf(!PI_PRESENT)("message_end hook and the status command", () => {
 			{ message: { role: "assistant", usage: { input: 5_000, cacheRead: 30_000, cacheWrite: 0, output: 50 } } },
 			ctx,
 		);
-		await s.hooks.get("context")!({ messages: heavySession() }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 
 		const writes: string[] = [];
 		const originalWrite = process.stderr.write;
@@ -495,7 +496,7 @@ describe.skipIf(!PI_PRESENT)("message_end hook and the status command", () => {
 			);
 			await s.hooks.get("agent_settled")!({}, ctx);
 
-			await s.hooks.get("context")!({ messages: heavySession() }, ctx);
+			await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 			await s.hooks.get("message_end")!(
 				{ message: { role: "assistant", usage: { input: 40_000, cacheRead: 0, cacheWrite: 0, output: 50 } } },
 				ctx,
@@ -559,7 +560,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		await s.hooks.get("session_start")!({}, ctx);
 		expect(statuses["context-fold"]).toContain("idle");
 
-		await s.hooks.get("context")!({ messages: heavySession() }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 		expect(statuses["context-fold"]).toContain("×1");
 		expect(statuses["context-fold"]).toContain("tok masked");
 		// The fold consumed every eligible block, so the gauge restarts counting toward the next
@@ -572,7 +573,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		const s = await load();
 		const { ctx, statuses } = ctxFor({ usage: { contextWindow: 80_000, tokens: 30_000 } });
 
-		await s.hooks.get("context")!({ messages: heavySession() }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 		expect(statuses["context-fold"]).toContain("next fold at 60% ctx");
 		expect(statuses["context-fold"]).not.toContain("×");
 	});
@@ -592,7 +593,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 
 		// 40k/80k = 50% ≥ the 45% threshold, but only ~2.5k of maskable mass (< the 9.6k step):
 		// no fold fires, and the gauge shows progress toward the step instead of the usage threshold.
-		await s.hooks.get("context")!({ messages }, ctx);
+		await s.hooks.get("context_with_system")!({ messages }, ctx);
 		expect(statuses["context-fold"]).toMatch(/next fold: \S+\/\S+ maskable/);
 		expect(statuses["context-fold"]).not.toContain("×");
 	});
@@ -605,7 +606,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		// with even though usage (50%) is past the 45% threshold. Still interim — a big tool result
 		// next turn would start filling the gauge — so it counts from zero rather than declaring
 		// folding impossible.
-		await s.hooks.get("context")!({ messages: [user("hi"), assistantText("a long answer"), user("more")] }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: [user("hi"), assistantText("a long answer"), user("more")] }, ctx);
 		expect(statuses["context-fold"]).toMatch(/next fold: 0\/\S+ maskable/);
 		expect(statuses["context-fold"]).not.toContain("×");
 	});
@@ -616,7 +617,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		// conversation leaves nothing maskable: the terminal state, not an interim one.
 		const { ctx, statuses } = ctxFor({ usage: { contextWindow: 80_000, tokens: 70_000 } });
 
-		await s.hooks.get("context")!({ messages: [user("hi"), assistantText("x".repeat(280_000)), user("more")] }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: [user("hi"), assistantText("x".repeat(280_000)), user("more")] }, ctx);
 		expect(statuses["context-fold"]).toContain("⚠ no more folds possible (over budget)");
 	});
 
@@ -632,7 +633,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 
 		// 70k of 80k is past the 60k budget and heavySession has plenty to mask: the cap branch would fire.
 		const messages = heavySession();
-		const out = (await s.hooks.get("context")!({ messages }, ctx)) as { messages: AgentMessage[] };
+		const out = (await s.hooks.get("context_with_system")!({ messages }, ctx)) as { messages: AgentMessage[] };
 		expect(out.messages).toBe(messages);
 		expect(statuses["context-fold"]).toContain("folding paused: provider holds the context");
 		expect(statuses["context-fold"]).not.toContain("×");
@@ -644,7 +645,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		const bare = ctxFor({ usage: { contextWindow: 80_000, tokens: null } }).ctx as { ui?: unknown };
 		bare.ui = undefined;
 
-		await expect(Promise.resolve(s.hooks.get("context")!({ messages: heavySession() }, bare))).resolves.toBeTruthy();
+		await expect(Promise.resolve(s.hooks.get("context_with_system")!({ messages: heavySession() }, bare))).resolves.toBeTruthy();
 	});
 });
 
@@ -655,7 +656,7 @@ describe.skipIf(!PI_PRESENT)("wire watchdog (folds that never reach the provider
 			{ message: { role: "assistant", usage: { input: 10_000, cacheRead: 30_000, cacheWrite: 0, output: 50 } } },
 			ctx,
 		);
-		await s.hooks.get("context")!({ messages: heavySession() }, ctx); // fold event fires here
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx); // fold event fires here
 		await s.hooks.get("message_end")!(
 			{ message: { role: "assistant", usage: { input: 5_000, cacheRead: 41_000, cacheWrite: 0, output: 50 } } },
 			ctx,
@@ -698,7 +699,7 @@ describe.skipIf(!PI_PRESENT)("wire watchdog (folds that never reach the provider
 			{ message: { role: "assistant", usage: { input: 10_000, cacheRead: 30_000, cacheWrite: 0, output: 50 } } },
 			ctx,
 		);
-		await s.hooks.get("context")!({ messages: heavySession() }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 		// Cache read collapses below the pre-fold prompt: the rewrite reached the wire.
 		await s.hooks.get("message_end")!(
 			{ message: { role: "assistant", usage: { input: 3_000, cacheRead: 12_000, cacheWrite: 25_000, output: 50 } } },
@@ -752,7 +753,7 @@ describe.skipIf(!PI_PRESENT)("compaction lifecycle events own the count and the 
 		const s = await load();
 		const { ctx } = ctxFor({ usage: { contextWindow: 80_000, tokens: null } });
 		// A fold event first, so the index holds one legitimate fold record.
-		await s.hooks.get("context")!({ messages: heavySession() }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 
 		const { SeedIndexStore } = await import("../src/adapters/pi/index-store");
 		const index = new SeedIndexStore(join(dir, "context-fold", "s1"));
@@ -773,7 +774,7 @@ describe.skipIf(!PI_PRESENT)("compaction lifecycle events own the count and the 
 		process.env.CONTEXTFOLD_COMPACT = "det";
 		const s = await load();
 		const { ctx } = ctxFor({ usage: { contextWindow: 80_000, tokens: null } });
-		await s.hooks.get("context")!({ messages: heavySession() }, ctx);
+		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 		await s.hooks.get("session_before_compact")!({ preparation: prep() }, ctx);
 		await s.hooks.get("session_compact")!({ reason: "threshold", fromExtension: true }, ctx);
 
@@ -790,7 +791,7 @@ describe.skipIf(!PI_PRESENT)("compaction lifecycle events own the count and the 
 		const messages = heavySession();
 		const { ctx } = ctxFor({ usage: { contextWindow: 80_000, tokens: null }, messages });
 		await s.hooks.get("session_start")!({}, ctx);
-		await s.hooks.get("context")!({ messages }, ctx);
+		await s.hooks.get("context_with_system")!({ messages }, ctx);
 		await s.hooks.get("session_before_compact")!({ preparation: prep() }, ctx);
 		await s.hooks.get("session_compact")!({ reason: "threshold", fromExtension: true }, ctx);
 

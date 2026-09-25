@@ -137,6 +137,31 @@ export function extractIndex(input: ExtractInput): ExtractedIndex {
 	return out;
 }
 
+/** Re-extract history with recent blocks taking precedence, even within one long user turn. */
+export function extractCompactionIndex(blocks: WireBlock[]): ExtractedIndex {
+	const calls = new Map(blocks.filter(b => b.kind === "tool_call" && b.callId).map(b => [b.callId!, b]));
+	const extracted = blocks.filter(b => b.kind !== "user").map(b => {
+		const call = b.kind === "tool_result" && b.callId ? calls.get(b.callId) : undefined;
+		return extractIndex({ masked: [b], all: call ? [call, b] : [b] });
+	});
+	const recent = (field: "files" | "commands" | "errors" | "identifiers", cap: number): string[] => {
+		const values = new Set<string>();
+		for (const record of extracted) for (const value of record[field]) {
+			values.delete(value);
+			values.add(value);
+		}
+		return [...values].slice(-cap);
+	};
+	return {
+		files: recent("files", MAX_FILES),
+		commands: recent("commands", MAX_COMMANDS),
+		errors: recent("errors", MAX_ERRORS),
+		identifiers: recent("identifiers", MAX_IDENTIFIERS),
+		// Recovery can compact an oversized user input after omitting its failed assistant attempt.
+		userMessages: blocks.filter(b => b.kind === "user").map(b => ({ turn: b.turn, firstLine: firstLine(b.text, USER_FIRST_LINE_CLIP) })),
+	};
+}
+
 /** Assemble a complete record from the extracted fields plus the event envelope (pure). */
 export function buildIndexRecord(
 	envelope: Omit<SeedIndexRecord, "v" | "kind" | keyof ExtractedIndex | "spans">,

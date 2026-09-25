@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const PI_PRESENT = existsSync(resolve(__dirname, "../node_modules/@earendil-works/pi-coding-agent/node_modules/typebox"));
+const PI_PRESENT = existsSync(resolve(__dirname, "../node_modules/@earendil-works/pi-coding-agent/package.json"));
 
 interface Recorded {
 	hooks: string[];
@@ -53,8 +53,9 @@ describe.skipIf(!PI_PRESENT)("extension entry point", () => {
 		contextFold(s.api);
 
 		expect(s.hooks).toEqual(
-			expect.arrayContaining(["session_start", "message_end", "agent_settled", "context", "session_before_compact"]),
+			expect.arrayContaining(["session_start", "message_end", "agent_settled", "context_with_system", "session_before_compact"]),
 		);
+		expect(s.hooks).not.toContain("context");
 		expect(s.hooks).not.toContain("tool_result");
 		expect(s.hooks).not.toContain("before_agent_start");
 		expect(s.tools).toEqual(expect.arrayContaining(["recall_folded", "unfold"]));

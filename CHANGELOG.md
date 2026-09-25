@@ -5,7 +5,21 @@ Notable changes to context-fold.
 
 ## Unreleased
 
+### Changed
+
+- Require Pi 0.87.1 or newer and pin the development dependency to 0.87.1.
+- Hard-compaction summaries re-extract the active branch's compacted history with current
+  context edits applied, rather than replaying archival index records or previous summaries.
+
 ### Fixed
+
+- Preserve system-prompt and tool deltas in place by folding through `context_with_system`.
+- Give persisted content replacements distinct fold identities and recover their exact bytes
+  from the corresponding edit entry after compaction and resume. Original handles stay valid.
+- Invalidate cached digests when equal-length source content changes.
+- Keep omitted or superseded evidence out of automatic compaction summaries and retain
+  user-only recovery input in the seed index.
+- Resolve test dependencies with npm's hoisted layout so Pi integration tests do not silently skip.
 
 - The ladder pauses on a transport that holds the conversation itself (a bridged CLI such as
   pi-with-claude): two responses booking the whole prompt as cache read with nothing prefilled

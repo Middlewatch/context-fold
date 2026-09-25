@@ -12,12 +12,9 @@
     "noEmit": true,
     "types": ["node"],
     "baseUrl": ".",
-    // Pi injects these as bundled virtual modules at runtime, so they are peer dependencies and
-    // are never shipped in this package. Point the type resolver at the copies inside the locally
-    // installed Pi CLI; `npm install` puts one there.
+    // Use Pi's public declarations. Pi injects bundled peer modules at runtime.
     "paths": {
-      "@earendil-works/pi-coding-agent": ["./node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/index.d.ts"],
-      "typebox": ["./node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/index.d.mts"]
+      "@earendil-works/pi-coding-agent": ["./node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"]
     }
   },
   "include": ["index.ts", "src", "tests", "vitest.config.ts"]

@@ -5,7 +5,7 @@ Long agentic sessions stay under budget by folding stale content (mostly long ch
 calls) out of the model's view. Every fold is reversible, indexed, and computed without a model
 call. Built for Pi and supported on Pi only.
 
-**Requirements:** Node ≥ 22.19.0 and Pi ≥ 0.80.4.
+**Requirements:** Node ≥ 22.19.0 and Pi ≥ 0.87.1.
 
 ```bash
 pi install npm:context-fold
@@ -51,8 +51,10 @@ least once.
 rather than churning. What remains is the irreducible floor, and it cannot compress past it.
 
 **3. Hard compaction.** Pi decides when this fires. By default (`CONTEXTFOLD_COMPACT=det`)
-context-fold intercepts it and hands Pi a summary rendered verbatim from the session's seed index,
-so Pi's LLM summarization never runs. `CONTEXTFOLD_COMPACT=native` opts back into Pi's stock
+context-fold intercepts it and renders a verbatim seed index re-extracted from the active branch's
+compacted history. Re-extraction honors content replacements and omissions, including edits to
+previously compacted messages. Old index records and narrative summaries remain archival rather
+than being replayed into automatic summaries. `CONTEXTFOLD_COMPACT=native` opts back into Pi's stock
 behavior.
 
 At this stage compaction removes the raw messages from live context. What survives is the index
@@ -123,6 +125,11 @@ original in the session ledger and verifies it against that sha before serving i
 deterministic `{#code FOLDED}` digest and can retrieve the original through `recall_folded` or
 restore it through `unfold`. This happens only when context pressure folds stale material;
 context-fold never hides a fresh result before its first delivery.
+
+Pi's append-only content edits create separate fold identities. A replacement cannot reuse the
+original's frozen digest or recall handle, and both recorded revisions remain available through
+explicit recall after compaction or resume. Replacement recalls use the edited ledger content
+rather than the original tool's full-output file.
 
 ### The seed index
 
@@ -293,10 +300,11 @@ extension. Context-fold watches provider usage for that outcome. Known interacti
 - **`codex-lite` does not rewrite context.** Its dialect mode replaces Pi's stock tools and appends
   prompt guidance. There is no fold bypass in that pairing; fresh shell output reaches the model
   before it can age into a ladder fold. Focused shell commands still reduce context growth.
-- **Current Pi chains `context` transforms as middleware.** Pi 0.83.0 and 0.84.1 are verified. On
-  older builds that predate transform chaining, context-fold must load after another context
-  rewriter. `session_before_compact` still selects one compaction result. Full versioned collision
-  table in `docs/pi-api-surface.md`.
+- **Pi 0.87.1 chains two context-transform phases.** Context-fold uses `context_with_system`
+  and preserves system messages and tool declarations in place. The ordinary `context` hook
+  collapses system patches when a handler replaces message objects, which would invalidate the
+  prefix on later prompt changes. Other extensions and providers can still collapse that prefix.
+  `session_before_compact` selects one compaction result. See `docs/pi-api-surface.md`.
 - **Do not load the package twice.** `pi install npm:context-fold` plus a `-e npm:context-fold`
   flag registers `recall_folded`/`unfold` twice and fails loudly at load with a tool-name conflict.
   Choose either the installed copy or `-e`.
@@ -390,6 +398,9 @@ With Pi and tmux installed, `bash scripts/check-cache-warning.sh` checks cancell
 resubmission, and image preservation through the provider boundary in a 48-column Pi terminal.
 It uses a local throwing fixture provider, makes no network request, and prints the directory
 containing its screen captures.
+
+The unit suite also exercises Pi 0.87.1's real extension runner and session projection without
+provider calls, including system patches, content edits, recovery cuts, and revision recall.
 
 The live scripts drive real Pi sessions against a real provider, so they cost money and need
 provider auth plus `python3`. They load the working copy explicitly, so they test the checkout

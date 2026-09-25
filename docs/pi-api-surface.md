@@ -1,125 +1,112 @@
 # Pi extension API surface
 
-This reference lists the Pi APIs that context-fold depends on, verified against the engine source
-in Pi 0.83.0 and 0.84.1. Contributors should re-check these APIs when upgrading Pi. The authoritative
-references are `docs/extensions.md`, `docs/compaction.md`, and `examples/extensions/*` inside an
-installed `@earendil-works/pi-coding-agent`.
+Context-fold requires Pi 0.87.1 or newer. This reference describes the contracts verified against
+0.87.1; the development dependency pins that version. Re-check `docs/extensions.md`,
+`docs/compaction.md`, `docs/session-format.md`, and the exported declarations in the installed
+`@earendil-works/pi-coding-agent` when updating it.
 
-The session-ledger findings below were verified against Pi 0.84.4. Their line numbers refer to
-`dist/core/session-manager.js` in that build.
+## Request-local folding and system prompts
 
-## The session ledger as recall's durability floor
+Pi's `ExtensionRunner.emitContext()` clones the transcript and dispatches two phases:
 
-Recall re-locates folded blocks in `sessionManager.getEntries()`. It depends on these properties,
-each verified in the engine source:
+1. `context` handlers receive conversation messages without system messages. If a handler returns
+   different message objects or changes their order, Pi restores the current prompt and tools as
+   one leading system checkpoint.
+2. `context_with_system` handlers receive the resulting full transcript. Their returned messages
+   are used directly. A leading system message must remain at index zero.
 
-- **Append-only.** The class doc states "The session is append-only" and entries are never
-  mutated or removed. `_appendEntry` pushes to `fileEntries`, and navigation through `branch()`
-  or `resetLeaf()` only moves the leaf pointer. As the source states, "Existing entries are not
-  modified or deleted" (session-manager.js:979, 1030–1041).
-- **Whole-tree reads.** `getEntries()` returns every in-memory entry minus the header rather
-  than only the active branch (session-manager.js:982–984). A block on an abandoned branch
-  therefore still resolves. Hard compaction appends a compaction entry and removes nothing.
-- **A fork copies the ledger.** `SessionManager.forkFrom` writes a new header and then copies
-  every non-header entry from the source file, including messages and custom entries
-  (session-manager.js:1270–1275). Recall in a forked session resolves the copied spans, and the
-  restored fold records verify against the copied messages.
-- **`newSession({parentSession})` carries nothing.** It resets `fileEntries` to a fresh header
-  (session-manager.js:652–661) and no reader traverses `parentSession`. Cross-session handoff is
-  therefore path-only. The `/fold-handoff` seed names the parent session file, and its codes
-  identify provenance rather than live handles.
-- **`persist: false` (in-memory embeddings) still serves recall in-process.**
-  `SessionManager.inMemory` sets no file, but `_appendEntry` populates `fileEntries` regardless
-  of persistence (session-manager.js:726–761, 1226–1228), so `getEntries()` answers normally for
-  the life of the process. Nothing survives exit because there is no file. The durable route
-  exists exactly where Pi keeps a session file.
+Context-fold uses the second phase. Its core ignores system messages, and its applier preserves
+untouched messages and array positions. Thus folding does not collapse prompt sections or tool
+additions/removals into the leading prompt. This matters on providers that support mid-conversation
+system messages: later prompt changes can remain appended deltas rather than rewriting the prefix.
+An earlier extension or provider lowering can still collapse that state.
 
-## Per-turn context mutation
+`before_agent_start` exposes structured `systemPromptOptions`. Context-fold does not register this
+hook or author system prompts. Pi records structured changes before the next request. A forced
+string prompt is projected onto the leading system message by Pi and can invalidate the prefix
+regardless of context-fold.
 
-The `context` hook fires before each LLM call on a deep copy. Its returned `messages` array
-replaces what Pi sends. The engine and docs confirm the following:
+| Hook | Context-fold behavior | Pi 0.87.1 composition |
+|---|---|---|
+| `context_with_system` | Substitute folded content; preserve system messages and positions | Chained after all ordinary `context` handlers |
+| `session_before_compact` | Return a deterministic summary and the supplied kept boundary | Last non-cancel result wins; cancellation short-circuits |
+| `message_end` | Observe provider usage | Context-fold returns no replacement |
 
-- `pi-agent-core/dist/harness/agent-harness.js` wires it as `transformContext`:
-  `const result = await emitHook({type:"context", messages:[...messages]}); return result?.messages ?? messages;`
-- `pi-agent-core/dist/agent-loop.js` calls `transformContext` immediately before `convertToLlm`
-  and the stream. It runs every assistant turn, on a copy, and never mutates persisted entries.
-- **Current Pi chains handlers as middleware.** In both verified versions,
-  `ExtensionRunner.emitContext()` passes each returned message array into the next handler's event,
-  so context-fold and another context rewriter both survive. `emitBeforeAgentStart()`,
-  `emitMessageEnd()`, and `emitToolResult()` use the same transform-chain model for their respective
-  payloads.
-- **Older builds used last-wins dispatch.** Every handler received the original event and the last
-  non-`undefined` return won. On a build that predates transform chaining, context-fold must load
-  after another context rewriter. Check the installed `ExtensionRunner` rather than inferring this
-  behavior from a version not listed above.
-- `session_before_compact` is not a transform chain in Pi 0.84. The last non-cancel result is still
-  selected, while `{ cancel: true }` short-circuits.
+Duplicate tool names are a separate load-time conflict. Load context-fold from one place only.
 
-```ts
-interface ContextEvent       { type: "context"; messages: AgentMessage[]; }
-interface ContextEventResult { messages?: AgentMessage[]; }
-pi.on("context", async (e, ctx) => ({ messages: rewritten }));
-```
+## Canonical context and recovery
 
-### Collision surface
+`SessionManager` owns finalized model context. Assigning to `agent.state.messages` does not replace
+future request history. Context-fold modifies only the outgoing copy and does not append Pi
+`context_edit` entries to implement folding.
 
-| Hook | context-fold returns | Pi 0.83.0 / 0.84.1 | Legacy last-wins build |
-|---|---|---|---|
-| `context` | rewritten messages, every turn | Chained | **High:** last context rewriter wins |
-| `session_before_compact` | deterministic compaction summary | **High:** last non-cancel strategy wins | **High:** last strategy wins |
-| `message_end` | nothing | Observe-only | Observe-only |
+A `context_edit` names a source entry. `replacement: null` omits it; a replacement changes content
+while retaining metadata. The latest edit on the active branch wins, and navigating before an edit
+restores the original contribution. Assistant and tool-result string replacements become text
+blocks.
 
-Tool-name and command-name conflicts (`recall_folded`, `unfold`, `/context-fold`) are different. They fail
-loudly at load rather than silently, so they need no mitigation beyond knowing to expect them.
+Context-fold reads `getBranch()` to select current revision identities. Replacements append
+`:edit:<entryId>` to each durable block ID. That suffix is internal to fold state and handles;
+message metadata sent to Pi is unchanged. Digest caching compares exact text.
 
-## Everything else this extension uses
+Recall uses `getEntries()`, which retains the whole append-only tree, including abandoned branches
+and compacted messages. `sessionEntryToContextMessages()` projects source entries, and the ledger
+reader separately indexes every persisted replacement revision. Each recorded handle resolves the
+same bytes after later edits, compaction, or resume, verified by its fold-time sha256. Replacement
+recalls do not use the original tool's full-output file.
 
-All of these fire headless.
+Other extensions can still rewrite content without persisting its revision. Such bytes may fail
+ledger verification. A live frozen block can fall back to its snapshot with a warning; after it
+leaves live context, recall returns a typed error rather than unrelated raw content.
+
+## Hard compaction
+
+Pi checks canonical projected context after tools complete, before the next assistant request and
+its request-local transforms. It also checks before new prompts and handles post-run overflow
+recovery. Request-local folding cannot be assumed to prevent these canonical threshold checks.
+
+`session_before_compact.preparation` contains canonical `messagesToSummarize` and
+`turnPrefixMessages`, the supplied `firstKeptEntryId`, `tokensBefore`, and effective per-model
+settings. Both message arrays leave live context at a split-turn cut. The boundary may identify
+context-invisible recovery entries rather than an ordinary message. A retain-none compaction
+stores its own entry ID as the kept boundary.
+
+Context-fold preserves Pi's boundary and re-extracts lexical evidence from the active branch before
+it, applying the latest edits to earlier compacted source entries too. It renders only the new
+compact index record. Historical index records and previous narrative summaries cannot establish
+which evidence remains current. Pi attaches the complete system-prompt/tool checkpoint when it
+appends the compaction entry; context-fold does not construct one.
+
+On success, `session_compact` settles the index record and increments the advisory count. On failure
+or cancellation, `session_compact_failed` retracts the pending compact record. Overflow recovery
+omissions persist even when compaction fails, so the next outgoing view still honors those edits.
+The newer actionable `turn_end` and `agent_before_settle` boundaries are not required by this
+request-local folding design.
+
+## Remaining APIs
 
 | Need | API |
 |---|---|
-| Detect pressure | `ctx.getContextUsage()` → `{ contextWindow, tokens }` |
-| Measured prompt-cache usage | `message.usage.{cacheRead,cacheWrite,input}` on `message_end` |
-| Resume cache-age estimate | `ctx.sessionManager.getBranch()` → successful assistant entries, using entry completion timestamps and provider/model identity |
-| Recheck or stop cache timers | `session_start`, `session_tree`, `model_select`, `session_compact`, `agent_start`, `agent_settled`, `session_shutdown` |
-| Optional pre-request confirmation | `pi.on("input", …)` with interactive source → `ctx.ui.select`; `handled` consumes a cancelled prompt before model/auth/compaction work |
-| Draft restoration | `ctx.ui.setEditorText(text)` plus `ctx.ui.notify` to request a render; retained structured images return via `input` → `transform` on resubmission |
-| Know the agent loop is actually idle | `pi.on("agent_settled", …)`, which fires after retries, compaction, and queued continuations finish |
-| Hard-compaction summary / cancel | `pi.on("session_before_compact", …) → {compaction:{summary, firstKeptEntryId, tokensBefore}} \| {cancel:true}` |
-| Compaction actually completed (count it, settle the index record) | `pi.on("session_compact", …)` |
-| Compaction failed/aborted after preparation (retract the compact record) | `pi.on("session_compact_failed", …)` postdates 0.84.1. On older engines the handler never fires, so context-fold registers it through a plain-string cast and leaves the premature record in place |
-| Model changed mid-session (restart the cache-telemetry segment) | `pi.on("model_select", …)` → `{ model, previousModel?, source: "set" \| "cycle" \| "restore" }` |
-| Agent-facing tool | `pi.registerTool({ name, label, description, promptSnippet, promptGuidelines, parameters: Type.Object({…}), execute })` |
-| Slash command | `pi.registerCommand(name, { description, handler })` |
-| Footer status line (TUI) | `ctx.ui.setStatus(key, text)`, a keyed slot on the footer's extension-status line where `undefined` clears. No-op stub in print/json modes, forwarded as an event in RPC mode. |
-| Persist custom entry (NOT in LLM context) | `pi.appendEntry(type, data)` |
-| Read entries back | `ctx.sessionManager.getEntries()`, filtered on `entry.type === "custom" && entry.customType === …` |
-| Session paths | `ctx.sessionManager.getSessionDir()` / `.getSessionId()` / `.getSessionFile()` |
-| Seed a replacement session (`/fold-handoff` confirm path) | `ctx.newSession({ parentSession, setup, withSession })` on the command context; `setup(sm)` appends the seed as a persisted user message. `withSession(ctx)` displays the success notice through the fresh context without triggering a turn. Successful replacement invalidates the original command context |
-| Out-of-band completion | `import { complete } from "@earendil-works/pi-ai/compat"` |
+| Pressure | `ctx.getContextUsage()` supplies `contextWindow` and nullable `tokens` |
+| Measured cache usage | Assistant `message.usage` on `message_end` |
+| Final idle boundary | `agent_settled`, after recovery and queued work |
+| Resume and navigation cache advisories | `session_start`, `session_tree`, `model_select`, `session_compact` |
+| Optional send confirmation | Interactive `input`, `ctx.ui.select`, and `handled` or `transform` results |
+| Draft restoration | `ctx.ui.setEditorText`, notification, and retained structured images |
+| Tools and commands | `pi.registerTool`, `pi.registerCommand` |
+| Footer | `ctx.ui.setStatus`, guarded where necessary |
+| Fold state persistence | `pi.appendEntry` with custom type `contextfold.fold` |
+| Session artifacts | `getSessionDir`, `getSessionId`, `getSessionFile` |
+| Handoff replacement session | Command-context `newSession({ parentSession, setup, withSession })` |
 
-`StringEnum` for tool-parameter enums is imported from `@earendil-works/pi-ai`.
+Successful session replacement invalidates the old command context. Handoff captures plain data
+first and uses `withSession` for its success notification. A new session does not inherit recall
+handles from its parent; the handoff seed names parent artifacts for explicit recovery.
 
-## Two hard constraints
+Pi injects bundled modules at runtime. Keep `typebox` and `@earendil-works/*` as peers rather than
+vendoring them. The test resolver follows npm's dependency resolution, including hoisted layouts.
 
-1. **Import LLM and type helpers only from `@earendil-works/pi-ai/compat`.** Pi's loader injects
-   bundled virtual modules, so a separately installed `pi-ai` will not see the engine's model
-   registry or auth. The same applies to `typebox` and the other `@earendil-works/*` packages, which
-   are declared as peer dependencies rather than bundled.
-2. **Avoid isolated sub-workers for any model call.** Pi loads extensions through jiti with
-   `moduleCache: false`. A call made from a separate isolated worker gets its own empty provider
-   registry and will not see custom providers. Call synchronously inside the hook (the main module
-   sees the registry), or use a plain `fetch` to an OpenAI-compatible URL.
-
-## Headless notes
-
-The hooks, tools, and commands above are available in `pi -p --mode json`, but UI calls need
-headless guards. Cache prediction and send confirmation require an interactive TUI. The command
-and settings menus require `ctx.hasUI`; headless calls use the status or effective-settings path
-instead. Observed cold-input notices use stderr headlessly. The footer updater and user-invoked
-`/fold-handoff` confirmation also guard UI access.
-
-`ctx.shutdown()` is a no-op in print mode. Compaction still auto-fires on threshold and overflow
-headlessly, so `session_before_compact` is reachable without an interactive `/compact`.
-
-The folding design must be fully autonomous, so nothing on the automatic path calls `ui.confirm`.
+The automatic path works without UI and never calls a model. Cache-send confirmation requires an
+interactive TUI; menus guard UI access. Live provider verification scripts require separate paid
+requests. `tests/pi-compat.test.ts` exercises the actual Pi runner, session projection, and
+compaction preparation locally without a provider.

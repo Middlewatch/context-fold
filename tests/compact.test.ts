@@ -129,14 +129,11 @@ describe("compact index record + deterministic summary", () => {
 		const summary = renderDetCompactionSummary({
 			records: index.readAll(),
 			sessionFilePath: join(dir, "session.jsonl"),
-			previousSummary: "Earlier narrative summary.",
 		});
 		expect(summary).toContain("deterministic seed index — no model involved");
 		expect(summary).toContain("CAP_X9_LIMIT");
 		expect(summary).toContain("recall_folded search=");
 		expect(summary).toContain("dig through the dumps");
-		expect(summary).toContain("UNTRUSTED");
-		expect(summary).toContain("Earlier narrative summary.");
 		// Recovery pointers name real codes.
 		expect(summary).toMatch(/\{#[a-z0-9]{1,8} FOLDED\}/);
 	});

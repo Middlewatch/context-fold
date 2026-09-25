@@ -19,7 +19,7 @@ import { applyPlan } from "../../core/apply";
 import { digest, wireFoldable, foldCode, substTokens } from "../../core/digest";
 import { estTokens, safeSlice, BLOCK_OVERHEAD } from "../../core/tokens";
 import { MapFoldRegistry, type FoldEntry } from "../../core/fold-registry";
-import { sha256Hex, type LedgerLookup } from "./ledger";
+import { reviseBlocks, sha256Hex, type LedgerLookup } from "./ledger";
 import { readFileSync } from "node:fs";
 
 /** The newest block is always protected (target>0); adding an older block may not overflow this. */
@@ -157,10 +157,10 @@ export class ContextFoldEngine {
 	private readonly foldRejected = new Set<string>();
 	/** Per-turn snapshot: durable id → wire block (full content), for the unfold/recall tool. */
 	private snapshot = new Map<string, WireBlock>();
-	/** Cross-turn deterministic digest cache (id + text length → digest/tokens). linearize recreates
+	/** Cross-turn deterministic digest cache (id + exact text to digest/tokens). linearize recreates
 	 *  block objects every turn, so the WeakMap caches in digest.ts never hit across turns — without
 	 *  this the full risk-line regex sweep re-runs over every foldable block on every model call. */
-	private readonly detCache = new Map<string, { len: number; digest: string; tokens: number }>();
+	private readonly detCache = new Map<string, { text: string; digest: string; tokens: number }>();
 	/** Last status the policy published (display-only). */
 	private lastStatus: { text: string | null; metrics?: Record<string, number | string | boolean> } | null = null;
 
@@ -263,12 +263,12 @@ export class ContextFoldEngine {
 	 * host-reported context window; returns the rewritten array to send. Pure with respect to the
 	 * input (applyPlan clones touched messages); mutates only this engine's instance memory.
 	 */
-	process(messages: AgentMessage[], context: ContextFrameInput): AgentMessage[] {
-		const blocks = linearize(messages);
+	process(messages: AgentMessage[], context: ContextFrameInput, revisions: ReadonlyMap<string, string> = new Map()): AgentMessage[] {
+		const blocks = reviseBlocks(linearize(messages), revisions);
 		// Refresh the snapshot for the unfold/recall tool (full content — folding never mutates it).
 		this.snapshot = new Map(blocks.map((b) => [b.id, b] as const));
 		this.pruneCaches(blocks);
-		const firstDelivery = firstDeliveryResultIds(messages);
+		const firstDelivery = new Set([...firstDeliveryResultIds(messages)].map(id => revisions.get(id) ?? id));
 
 		const frame = normalizeContextFrame(context);
 
@@ -304,7 +304,9 @@ export class ContextFoldEngine {
 			);
 		}
 
-		return applyPlan(messages, allOps);
+		// The wire keeps Pi's message metadata; only fold identities carry revision suffixes.
+		const originalIds = new Map([...revisions].map(([original, revised]) => [revised, original]));
+		return applyPlan(messages, allOps.map(op => ({ ...op, id: originalIds.get(op.id) ?? op.id })));
 	}
 
 	/**
@@ -645,18 +647,18 @@ export class ContextFoldEngine {
 		};
 	}
 
-	/** Cross-turn cached deterministic digest for a block (id + text-length keyed; see detCache). */
+	/** Reuse a digest only when the source text is unchanged. */
 	private detDigest(b: WireBlock): string {
 		const hit = this.detCache.get(b.id);
-		if (hit && hit.len === b.text.length) return hit.digest;
+		if (hit && hit.text === b.text) return hit.digest;
 		const d = digest(b);
-		this.detCache.set(b.id, { len: b.text.length, digest: d, tokens: estTokens(d) + BLOCK_OVERHEAD });
+		this.detCache.set(b.id, { text: b.text, digest: d, tokens: estTokens(d) + BLOCK_OVERHEAD });
 		return d;
 	}
 
 	private detDigestTokens(b: WireBlock): number {
 		const hit = this.detCache.get(b.id);
-		if (hit && hit.len === b.text.length) return hit.tokens;
+		if (hit && hit.text === b.text) return hit.tokens;
 		this.detDigest(b);
 		return this.detCache.get(b.id)!.tokens;
 	}

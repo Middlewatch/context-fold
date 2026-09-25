@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { linearize } from "../src/core/block";
-import { extractIndex, buildIndexRecord } from "../src/core/index/seed-index";
+import { extractIndex, extractCompactionIndex, buildIndexRecord } from "../src/core/index/seed-index";
 import type { WireBlock } from "../src/core/block";
 import { user, assistantWithCalls, toolResult } from "./helpers";
 
@@ -102,6 +102,17 @@ describe("seed-index extraction", () => {
 		const idx = extractIndex({ masked, all });
 		expect(idx.identifiers.length).toBeLessThanOrEqual(64);
 		expect(new Set(idx.identifiers).size).toBe(idx.identifiers.length);
+	});
+
+	it("keeps recent turns when re-extracting a long compacted history", () => {
+		const messages = [];
+		for (let i = 0; i < 40; i++) messages.push(user(`request ${i}`), toolResult(`c${i}`, `Error: MARKER_${i}`));
+		const result = extractCompactionIndex(linearize(messages));
+		expect(result.errors).toHaveLength(24);
+		expect(result.errors[0]).toBe("Error: MARKER_16");
+		expect(result.errors.at(-1)).toBe("Error: MARKER_39");
+		expect(extractCompactionIndex(linearize([user("preserve a recovered request")])).userMessages)
+			.toEqual([{ turn: 1, firstLine: "preserve a recovered request" }]);
 	});
 
 	it("assembles a complete v2 record", () => {
