@@ -200,15 +200,16 @@ append-only session file even once the raw message has left live context.
   forced compaction, irreducible context past half the window, cold with a large carry, and recall
   churn. See [Configuration](#configuration) for settings.
 - **Footer status line (TUI)**: a persistent one-line summary in Pi's footer (`⧉ context-fold ×3
-  · ~41k tok masked · next fold: 3.1k/9.6k maskable · cache avg 66%`), updated as fold events fire.
-  The line is purely visual. It adds nothing to the transcript or the model's context and leaves
-  headless modes unaffected. The middle segment is the ladder's trigger gauge, showing whichever
-  fold condition is actually binding. Below the entry threshold it names it (`next fold at 45% ctx`); once usage is
-  past the threshold, which is permanent from then on, it tracks maskable mass toward the next fold
-  step (`next fold: 3.1k/9.6k maskable`, counting up from 0 right after a fold as new observations
-  land). `⚠ no more folds possible (over budget)` appears only in the terminal state where the
-  irreducible tail and roots exceed the budget. `cache avg` is the whole-session cache hit ratio,
-  unlike Pi's `CH`, which is the last turn only.
+  · ~41k masked · next fold 3.1k/9.6k · cache 66%`), updated as fold events fire. The line is
+  purely visual. It adds nothing to the transcript or the model's context and leaves headless modes
+  unaffected. It is kept short because footers that show every extension's status on one row wrap
+  a long line in narrow or split panes. The middle segment is the ladder's trigger gauge, showing
+  whichever fold condition is actually binding. Below the entry threshold it names it (`next fold
+  at 45%`); once usage is past the threshold, which is permanent from then on, it tracks maskable
+  mass toward the next fold step (`next fold 3.1k/9.6k`, counting up from 0 right after a fold as
+  new observations land). `⚠ over budget` appears only in the terminal state where the irreducible
+  tail and roots exceed the budget and no further fold is possible. `cache` is the whole-session
+  cache hit ratio, unlike Pi's `CH`, which is the last turn only.
 - **Fold cost accounting**: once a fold event has fired, the status reports both sides: tokens
   masked per turn against tokens the provider re-prefilled because the fold moved the prefix, plus
   the running net. A fold rewrites history from the earliest masked block forward, so that
@@ -295,8 +296,7 @@ extension. Context-fold watches provider usage for that outcome. Known interacti
   input down the wire, keys its history diff by identity so a fold's in-place mask counts as history
   already absorbed, and reports the CLI's own occupancy as cache read with nothing prefilled. A fold
   there rewrites a copy the model never receives. Context-fold recognises that usage shape after two
-  responses and pauses the ladder for the session (footer: `folding paused: provider holds the
-  context`). Recall and the seed index keep working, and the CLI manages the real window itself.
+  responses and pauses the ladder for the session (footer: `paused: provider holds context`). Recall and the seed index keep working, and the CLI manages the real window itself.
 - **`codex-lite` does not rewrite context.** Its dialect mode replaces Pi's stock tools and appends
   prompt guidance. There is no fold bypass in that pairing; fresh shell output reaches the model
   before it can age into a ladder fold. Focused shell commands still reduce context growth.

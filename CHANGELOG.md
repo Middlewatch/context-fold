@@ -10,6 +10,10 @@ Notable changes to context-fold.
 - Require Pi 0.87.1 or newer and pin the development dependency to 0.87.1.
 - Hard-compaction summaries re-extract the active branch's compacted history with current
   context edits applied, rather than replaying archival index records or previous summaries.
+- Shorter footer status line, so it fits a footer row shared with other extensions in narrow or
+  split panes (#1): `⧉ ×3 · ~7.9k masked · ⚠ over budget · cache 100%` replaces
+  `⧉ ×3 · ~7.9k tok masked · ⚠ no more folds possible (over budget) · cache avg 100%`. The trigger
+  gauge now reads `next fold at 45%`, `next fold 3.1k/9.6k`, and `paused: provider holds context`.
 
 ### Fixed
 

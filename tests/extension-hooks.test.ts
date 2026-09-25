@@ -562,10 +562,10 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 
 		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
 		expect(statuses["context-fold"]).toContain("×1");
-		expect(statuses["context-fold"]).toContain("tok masked");
+		expect(statuses["context-fold"]).toContain("masked");
 		// The fold consumed every eligible block, so the gauge restarts counting toward the next
 		// step — an interim state that refills as new observations land, not a terminal one.
-		expect(statuses["context-fold"]).toMatch(/next fold: 0\/\S+ maskable/);
+		expect(statuses["context-fold"]).toMatch(/next fold 0\/\S+/);
 	});
 
 	it("names the configured entry threshold while usage is still below it", async () => {
@@ -574,7 +574,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		const { ctx, statuses } = ctxFor({ usage: { contextWindow: 80_000, tokens: 30_000 } });
 
 		await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
-		expect(statuses["context-fold"]).toContain("next fold at 60% ctx");
+		expect(statuses["context-fold"]).toContain("next fold at 60%");
 		expect(statuses["context-fold"]).not.toContain("×");
 	});
 
@@ -594,7 +594,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		// 40k/80k = 50% ≥ the 45% threshold, but only ~2.5k of maskable mass (< the 9.6k step):
 		// no fold fires, and the gauge shows progress toward the step instead of the usage threshold.
 		await s.hooks.get("context_with_system")!({ messages }, ctx);
-		expect(statuses["context-fold"]).toMatch(/next fold: \S+\/\S+ maskable/);
+		expect(statuses["context-fold"]).toMatch(/next fold \S+\/\S+/);
 		expect(statuses["context-fold"]).not.toContain("×");
 	});
 
@@ -607,7 +607,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		// next turn would start filling the gauge — so it counts from zero rather than declaring
 		// folding impossible.
 		await s.hooks.get("context_with_system")!({ messages: [user("hi"), assistantText("a long answer"), user("more")] }, ctx);
-		expect(statuses["context-fold"]).toMatch(/next fold: 0\/\S+ maskable/);
+		expect(statuses["context-fold"]).toMatch(/next fold 0\/\S+/);
 		expect(statuses["context-fold"]).not.toContain("×");
 	});
 
@@ -618,7 +618,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		const { ctx, statuses } = ctxFor({ usage: { contextWindow: 80_000, tokens: 70_000 } });
 
 		await s.hooks.get("context_with_system")!({ messages: [user("hi"), assistantText("x".repeat(280_000)), user("more")] }, ctx);
-		expect(statuses["context-fold"]).toContain("⚠ no more folds possible (over budget)");
+		expect(statuses["context-fold"]).toContain("⚠ over budget");
 	});
 
 	it("pauses folding and says so when usage shows the transport holds the conversation", async () => {
@@ -635,7 +635,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		const messages = heavySession();
 		const out = (await s.hooks.get("context_with_system")!({ messages }, ctx)) as { messages: AgentMessage[] };
 		expect(out.messages).toBe(messages);
-		expect(statuses["context-fold"]).toContain("folding paused: provider holds the context");
+		expect(statuses["context-fold"]).toContain("paused: provider holds context");
 		expect(statuses["context-fold"]).not.toContain("×");
 		expect(statuses["context-fold"]).not.toContain("over budget");
 	});

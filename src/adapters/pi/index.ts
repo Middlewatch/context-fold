@@ -125,35 +125,36 @@ export default function contextFold(pi: ExtensionAPI): void {
 
 	// The trigger gauge: render whichever ladder condition is actually binding, so the line stays
 	// meaningful in every state. Below the entry threshold that IS the threshold ("next fold at
-	// 45% ctx"); at or past it the usage threshold is permanently satisfied and the real trigger is
+	// 45%"); at or past it the usage threshold is permanently satisfied and the real trigger is
 	// maskable mass reaching one ladder step, so the gauge tracks that instead — counting up from
-	// 0 right after a fold, since interim emptiness refills as new observations land. "No more
-	// folds possible" is reserved for the terminal state where the irreducible floor is over
+	// 0 right after a fold, since interim emptiness refills as new observations land. "Over
+	// budget" is reserved for the terminal state where the irreducible floor is over
 	// budget. Everything comes from the ladder's published metrics (env-configured, cold-branch
 	// aware) — never re-derived or hard-coded here.
 	const foldGauge = (m: Record<string, unknown>): string | null => {
-		if (m.provider_holds_context === true) return "folding paused: provider holds the context";
-		if (m.over_budget === true) return "⚠ no more folds possible (over budget)";
+		if (m.provider_holds_context === true) return "paused: provider holds context";
+		if (m.over_budget === true) return "⚠ over budget";
 		if (typeof m.usage_fraction !== "number" || typeof m.fold_at !== "number") return null;
-		if (m.usage_fraction < m.fold_at) return `next fold at ${Math.round(m.fold_at * 100)}% ctx`;
+		if (m.usage_fraction < m.fold_at) return `next fold at ${Math.round(m.fold_at * 100)}%`;
 		if (typeof m.maskable_tokens !== "number" || typeof m.step_tokens !== "number") return null;
-		return `next fold: ${k(m.maskable_tokens)}/${k(m.step_tokens)} maskable`;
+		return `next fold ${k(m.maskable_tokens)}/${k(m.step_tokens)}`;
 	};
 
 	// Persistent footer status: one keyed line in Pi's footer (TUI renders it below the stats
 	// line; headless modes stub setStatus to a no-op). Updated per turn rather than flashed per
 	// event — the numbers ticking up ARE the fold notification, with no transcript pollution.
+	// Wording stays short: the row is shared with other extensions' statuses in some footers (#1).
 	const updateFooter = (hctx: { ui?: { setStatus?: (key: string, text: string | undefined) => void } }) => {
 		const setStatus = hctx.ui?.setStatus?.bind(hctx.ui);
 		if (!setStatus) return;
 		const s = telemetry.snapshot();
 		const parts = [
 			// The footer labels this line with the extension key, so the text stays name-free.
-			s.foldEvents === 0 ? "⧉ idle" : `⧉ ×${s.foldEvents} · ~${k(s.foldSavedTokens)} tok masked`,
+			s.foldEvents === 0 ? "⧉ idle" : `⧉ ×${s.foldEvents} · ~${k(s.foldSavedTokens)} masked`,
 		];
 		const gauge = foldGauge(engine.status?.metrics ?? {});
 		if (gauge) parts.push(gauge);
-		if (s.hitRatio !== null) parts.push(`cache avg ${Math.round(s.hitRatio * 100)}%`);
+		if (s.hitRatio !== null) parts.push(`cache ${Math.round(s.hitRatio * 100)}%`);
 		if (s.wireDeferredFolds > 0) parts.push("⚠ folds not on wire");
 		setStatus("context-fold", parts.join(" · "));
 	};
