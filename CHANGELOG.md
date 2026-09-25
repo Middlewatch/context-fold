@@ -3,7 +3,7 @@ Note: This is largely LLM written, I won't hand write much in here unless I have
 
 Notable changes to context-fold.
 
-## Unreleased
+## 0.6.0 - 2026-09-25
 
 ### Changed
 
@@ -33,7 +33,6 @@ Notable changes to context-fold.
 - Keep omitted or superseded evidence out of automatic compaction summaries and retain
   user-only recovery input in the seed index.
 - Resolve test dependencies with npm's hoisted layout so Pi integration tests do not silently skip.
-
 - The ladder pauses on a transport that holds the conversation itself (a bridged CLI such as
   pi-with-claude): two responses booking the whole prompt as cache read with nothing prefilled
   mean Pi's message array is not the prompt, so a fold would rewrite a copy the model never

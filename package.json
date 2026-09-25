@@ -1,6 +1,6 @@
 {
   "name": "context-fold",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Deterministic, reversible in-session context compaction for the Pi coding agent — folds stale tool output out of the model's view, never out of the session.",
   "keywords": [
     "pi-package",
