@@ -1,5 +1,8 @@
 # context-fold
 
+> **Status (2026-09-30):** context-fold is going through a round of usefulness testing and may be
+> retired indefinitely.
+
 Deterministic, reversible context compaction for the [Pi coding agent](https://github.com/earendil-works/pi).
 Long agentic sessions stay under budget by folding stale content (mostly long chains of tool
 calls) out of the model's view. Every fold is reversible, indexed, and computed without a model
