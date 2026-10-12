@@ -299,8 +299,12 @@ extension. Context-fold watches provider usage for that outcome. Known interacti
 - **`pi-with-claude` holds the conversation in its `claude` child.** The bridge sends only new
   input down the wire, keys its history diff by identity so a fold's in-place mask counts as history
   already absorbed, and reports the CLI's own occupancy as cache read with nothing prefilled. A fold
-  there rewrites a copy the model never receives. Context-fold recognises that usage shape after two
-  responses and pauses the ladder for the session (footer: `paused: provider holds context`). Recall and the seed index keep working, and the CLI manages the real window itself.
+  there rewrites a copy the model never receives. Context-fold pauses the ladder for the session as soon
+  as the provider id is `pi-with-claude` (footer: `paused: provider holds context`); the usage-shape rule
+  (whole prompt read from cache, nothing prefilled, two responses) still covers bridges it does not know
+  by name, but it needs two usage reports and the bridge reports usage once per turn, so a long first
+  turn would fold freely before it fired. Recall and the seed index keep working, and the CLI manages the
+  real window itself.
 - **`codex-lite` does not rewrite context.** Its dialect mode replaces Pi's stock tools and appends
   prompt guidance. There is no fold bypass in that pairing; fresh shell output reaches the model
   before it can age into a ladder fold. Focused shell commands still reduce context growth.

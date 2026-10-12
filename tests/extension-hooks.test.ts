@@ -658,6 +658,20 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		expect(statuses["context-fold"]).not.toContain("over budget");
 	});
 
+	it("pauses folding from the first call when the provider is known to hold the conversation", async () => {
+		const s = await load();
+		// pi-with-claude reports usage only at turn end, so the usage rule cannot fire inside a long
+		// first turn; the provider name must pause the ladder before any usage report arrives.
+		const { ctx, statuses } = ctxFor({ usage: { contextWindow: 80_000, tokens: 70_000 } });
+		(ctx as { model: { id: string; provider: string } }).model = { id: "fable", provider: "pi-with-claude" };
+
+		const messages = heavySession();
+		const out = (await s.hooks.get("context_with_system")!({ messages }, ctx)) as { messages: AgentMessage[] };
+		expect(out.messages).toBe(messages);
+		expect(statuses["context-fold"]).toContain("paused: provider holds context");
+		expect(statuses["context-fold"]).not.toContain("×");
+	});
+
 	it("survives a ctx whose ui has no setStatus (headless stubs, older hosts)", async () => {
 		const s = await load();
 		const bare = ctxFor({ usage: { contextWindow: 80_000, tokens: null } }).ctx as { ui?: unknown };

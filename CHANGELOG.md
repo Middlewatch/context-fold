@@ -3,6 +3,17 @@ Note: This is largely LLM written, I won't hand write much in here unless I have
 
 Notable changes to context-fold.
 
+## Unreleased
+
+### Changed
+
+- Pause the ladder from the first model call when the provider is `pi-with-claude`. The usage-shape
+  rule needs two usage-bearing responses and that bridge reports usage once per turn, so a long
+  tool-heavy first turn committed 89 no-op folds and 19 layers before the rule could engage
+  (2026-10-12 session census). The usage rule stays for bridges not known by name.
+- Pin the development dependency to Pi 1.2.0 (the suite passes on 0.87.1 and 1.2.0; the minimum
+  stays 0.87.1).
+
 ## 0.6.0 - 2026-09-25
 
 ### Changed

@@ -32,6 +32,15 @@ import { CacheWarning, notifyCacheWarning } from "./cache-warning";
 import { adapterConfigFromEnv, configFromEnv, debugEnabled, type SavedSettings } from "./config";
 import { loadSavedSettings, runSettingsMenu, settingsReport } from "./settings";
 
+/**
+ * Providers known to hold the conversation in their own child process, so a fold rewrites a copy
+ * the model never receives. The usage rule in `CacheTelemetry` catches these too, but only after
+ * two usage-bearing responses, and a bridged CLI reports usage once per turn: a long tool-heavy
+ * first turn folded 89 times before the rule could see anything (2026-10-12 census). Naming the
+ * provider pauses the ladder from the first call.
+ */
+const PROVIDERS_HOLDING_CONTEXT: ReadonlySet<string> = new Set(["pi-with-claude"]);
+
 export default function contextFold(pi: ExtensionAPI): void {
 	// MASTER kill switch: CONTEXTFOLD=0/off/false disables the whole extension — no hooks, no
 	// tools, no folding — without changing the installed package.
@@ -329,10 +338,17 @@ export default function contextFold(pi: ExtensionAPI): void {
 			// A transport that holds the conversation itself (whole prompt read from cache, nothing
 			// prefilled, two responses running) never receives a fold's rewrite: pause the ladder rather
 			// than commit layers and index records the model can never see.
-			ladderPolicy.setProviderHoldsContext(t.providerHoldsContext);
-			if (debug && t.providerHoldsContext && !announcedProviderHeld) {
+			const providerId = ctx.model?.provider ?? "";
+			const heldByName = PROVIDERS_HOLDING_CONTEXT.has(providerId);
+			const held = heldByName || t.providerHoldsContext;
+			ladderPolicy.setProviderHoldsContext(held);
+			if (debug && held && !announcedProviderHeld) {
 				announcedProviderHeld = true;
-				process.stderr.write("[context-fold] usage shows the transport holds the conversation — folding paused for this session\n");
+				process.stderr.write(
+					heldByName
+						? `[context-fold] provider ${providerId} holds the conversation — folding paused for this session\n`
+						: "[context-fold] usage shows the transport holds the conversation — folding paused for this session\n",
+				);
 			}
 			// Fold-event → seed-index emission. Bound per turn so the emitter sees this ctx's stores.
 			engine.onFoldEvent = (foldEvent) => {
