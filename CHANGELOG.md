@@ -3,7 +3,9 @@ Note: This is largely LLM written, I won't hand write much in here unless I have
 
 Notable changes to context-fold.
 
-## Unreleased
+## 0.7.0 - 2026-10-13
+
+Minor bump because fold timing changes for one provider (see RELEASING.md).
 
 ### Changed
 
@@ -13,6 +15,8 @@ Notable changes to context-fold.
   (2026-10-12 session census). The usage rule stays for bridges not known by name.
 - Pin the development dependency to Pi 1.2.0 (the suite passes on 0.87.1 and 1.2.0; the minimum
   stays 0.87.1).
+- README carries a status note: the project is in a round of usefulness testing and may be
+  retired.
 
 ## 0.6.0 - 2026-09-25
 
