@@ -26,10 +26,11 @@ import { MapFoldRegistry } from "../../core/fold-registry";
 import { LedgerReader, compactionHistory, contextRevisions, reviseBlocks } from "./ledger";
 import { recordFoldEntry, recordLayer, recordUnfold, restoreFoldState } from "./persistence";
 import { CacheTelemetry, k } from "./cache-telemetry";
+import { CacheExpiryTracker } from "./cache-expiry";
 import { advise } from "./advisor";
 import { CacheWarning, notifyCacheWarning } from "./cache-warning";
 
-import { adapterConfigFromEnv, configFromEnv, debugEnabled, type SavedSettings } from "./config";
+import { adapterConfigFromEnv, configFromEnv, debugEnabled, resolveCacheWarming, type SavedSettings } from "./config";
 import { loadSavedSettings, runSettingsMenu, settingsReport } from "./settings";
 
 /**
@@ -69,6 +70,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 		acfg.reconTokens = a.reconTokens;
 		acfg.compact = a.compact;
 		acfg.footerFormat = a.footerFormat;
+		acfg.cacheTtlMs = a.cacheTtlMs;
 		ladderPolicy.setConfig(a.ladder);
 		engine.setConfig({
 			budgetFraction: DEFAULT_CONFIG.budgetFraction,
@@ -81,6 +83,18 @@ export default function contextFold(pi: ExtensionAPI): void {
 	const debug = debugEnabled();
 	const dumpPath = process.env.CONTEXTFOLD_DUMP?.trim() || null;
 	const telemetry = new CacheTelemetry();
+	// Learned, never persisted: the latest response timestamp and the cache tier its write chose.
+	const cacheExpiry = new CacheExpiryTracker();
+	const evaluateCacheExpiry = (
+		model: { promptCache?: { short?: number; long?: number } } | undefined,
+		activeRun = false,
+	) =>
+		cacheExpiry.evaluate({
+			model,
+			ttlOverrideMs: acfg.cacheTtlMs,
+			cacheWarming: resolveCacheWarming(savedSettings, pi),
+			activeRun,
+		});
 	engine.onLayerCommit = (layer) => {
 		try {
 			recordLayer(pi, layer);
@@ -210,12 +224,19 @@ export default function contextFold(pi: ExtensionAPI): void {
 	// Keyed by SESSION ID: a session switch inside one process re-restores for the new session and
 	// clears the previous session's registry (stale codes must never serve another session's blocks).
 	let restoredFor = "";
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", (event, ctx) => {
 		cacheWarning.restore(ctx);
+		// A same-id resume/reload can arrive while this instance still holds the old session's
+		// expiry state; reset before the id-based early return below.
+		const startReason = (event as { reason?: string }).reason;
+		if (startReason === "resume" || startReason === "reload") cacheExpiry.reset();
 		const sid = ctx.sessionManager.getSessionId();
 		if (restoredFor === sid) return;
 		const isSwitch = restoredFor !== "";
 		restoredFor = sid;
+		// Expiry state is learned in-process only. A resume (or a different session) starts unknown
+		// and learns the new cache tier from the first response, never from stale state.
+		cacheExpiry.reset();
 
 		if (isSwitch) {
 			registry.clear();
@@ -278,6 +299,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 		const message = event.message as { role?: string; usage?: Record<string, number> };
 		if (message.role !== "assistant" || !message.usage) return;
 		telemetry.record(message.usage);
+		cacheExpiry.record(message.usage);
 		updateFooter(ctx);
 		// Wire watchdog: a fold committed, yet this turn read the whole pre-fold prompt back from
 		// cache — the rewrite never reached the provider. Once per session, not per turn.
@@ -334,7 +356,14 @@ export default function contextFold(pi: ExtensionAPI): void {
 			// Ladder cold branch: no live cache read observed after a few turns ⇒ there is no warm
 			// prefix to protect, so the ladder folds earlier and more freely (measured, not assumed).
 			const t = telemetry.snapshot();
-			ladderPolicy.setCold(t.turns >= 3 && t.totals.cacheRead === 0);
+			const noCacheEver = t.turns >= 3 && t.totals.cacheRead === 0;
+			// Expiry check runs at request assembly, before sending: an elapsed model TTL feeds the
+			// existing cold branch (coldFoldAt), never a post-send fold or a probe request.
+			const expiry = evaluateCacheExpiry(ctx.model, event.messages.at(-1)?.role !== "user");
+			ladderPolicy.setCold(noCacheEver || expiry.expired);
+			if (debug && expiry.expired) {
+				process.stderr.write(`[context-fold] cache expiry: ${expiry.reason} — cold branch for this request\n`);
+			}
 			// A transport that holds the conversation itself (whole prompt read from cache, nothing
 			// prefilled, two responses running) never receives a fold's rewrite: pause the ladder rather
 			// than commit layers and index records the model can never see.
@@ -504,6 +533,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 		};
 		if (e.source === "restore" || !e.previousModel || !e.model) return;
 		if (e.previousModel.provider === e.model.provider && e.previousModel.id === e.model.id) return;
+		cacheExpiry.reset();
 		telemetry.reset();
 		wasCold = false;
 		cacheWarning.refresh(ctx);
@@ -586,11 +616,16 @@ export default function contextFold(pi: ExtensionAPI): void {
 					? ` · usage ${ctxUsageIsEstimate ? "~" : ""}${Math.round((m.usage_fraction as number) * 100)}%${gauge ? ` (${gauge})` : ""}`
 					: "";
 			const adv = buildAdvisory();
+			const expiry = evaluateCacheExpiry(cmdCtx.model);
+			const expiryLine = expiry.enabled
+				? `cache expiry: ${expiry.expired ? "expired — cold folding applies" : "warm"} (${expiry.tier ?? "configured"} ttl ${Math.round((expiry.ttlMs ?? 0) / 1000)}s)`
+				: `cache expiry: off (${expiry.reason})`;
 			const lines = [
 				`context-fold: ${state}${pos}`,
 				`${telemetry.statusLine()}${adv.coldNow ? " · COLD" : ""}${adv.paybackTurns !== null ? ` · reset pays back in ~${adv.paybackTurns} warm turns` : ""}`,
 				// Both sides of folding, not just the savings — see CacheTelemetry.foldCostLine.
 				...(telemetry.foldCostLine() ? [telemetry.foldCostLine() as string] : []),
+				expiryLine,
 				...adv.flags.map((f) => `⚑ ${f}`),
 				cmdCtx.hasUI ? "tune with /context-fold → Settings" : "tune with /context-fold config",
 			];

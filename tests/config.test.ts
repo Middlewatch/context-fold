@@ -10,6 +10,7 @@ import {
 	parseSavedSettings,
 	configFromEnv,
 	adapterConfigFromEnv,
+	resolveCacheWarming,
 	type SavedSettings,
 } from "../src/adapters/pi/config";
 
@@ -81,6 +82,12 @@ describe("knob parsers", () => {
 		expect(knob("reconTokens").parse("0")).toBeUndefined();
 	});
 
+	it("cache TTL override accepts 0/off and a millisecond value", () => {
+		expect(knob("cacheTtlMs").parse("0")).toBe(0);
+		expect(knob("cacheTtlMs").parse("300000")).toBe(300_000);
+		expect(knob("cacheTtlMs").parse("-1")).toBeUndefined();
+	});
+
 	it("the removed spool-retention knob is gone from the table", () => {
 		expect(KNOBS.some((s) => s.env === "CONTEXTFOLD_SPOOL_RETAIN_DAYS")).toBe(false);
 	});
@@ -111,6 +118,7 @@ describe("saved settings flow into the config builders", () => {
 		tail: 10_000,
 		foldAt: 0.35,
 		reconTokens: 9_000,
+		cacheTtlMs: 600_000,
 		compact: "native",
 		footerFormat: "compact",
 	};
@@ -138,6 +146,7 @@ describe("saved settings flow into the config builders", () => {
 		expect(acfg.compact).toBe("native");
 		expect(acfg.reconTokens).toBe(9_000);
 		expect(acfg.footerFormat).toBe("compact");
+		expect(acfg.cacheTtlMs).toBe(600_000);
 		expect(knob("footerFormat").parse("Full")).toBe("full");
 		expect(knob("footerFormat").parse("wide")).toBeUndefined();
 	});
@@ -166,5 +175,13 @@ describe("cache warning settings", () => {
 		expect(knob("cacheIdleMinutes").parse(" ")).toBeUndefined();
 		expect(knob("confirmColdPrompt").parse("on")).toBe("on");
 		expect(knob("confirmColdPrompt").parse("maybe")).toBeUndefined();
+	});
+
+	it("cache warming auto reads Pi's setting and an explicit knob overrides it", () => {
+		expect(resolveCacheWarming({}, { getSettings: () => ({ cacheWarming: "off" }) })).toBe("off");
+		expect(resolveCacheWarming({}, { getSettings: () => ({ cacheWarming: "streaming" }) })).toBe("streaming");
+		expect(resolveCacheWarming({ cacheWarming: "off" }, { getSettings: () => ({ cacheWarming: "streaming" }) })).toBe("off");
+		// An unreadable host setting falls back to off, where the config knob is the only gate.
+		expect(resolveCacheWarming({}, {})).toBe("off");
 	});
 });

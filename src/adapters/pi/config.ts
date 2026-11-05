@@ -8,6 +8,7 @@
  */
 import type { FoldConfig } from "./store";
 import { LADDER_DEFAULTS, type LadderConfig } from "../../core/policy/fold-ladder";
+import type { CacheWarmingMode } from "./cache-expiry";
 
 /** How the extension answers Pi's hard compaction (`session_before_compact`). */
 export type CompactMode = "det" | "native";
@@ -15,7 +16,10 @@ export type CompactMode = "det" | "native";
 /** Footer status line: `full` adds the trigger gauge; `compact` shows the count and warnings only. */
 export type FooterFormat = "full" | "compact";
 
-export type KnobValue = number | CompactMode | FooterFormat | "on" | "off";
+/** `auto` reads Pi's own setting; the explicit modes override it for this extension. */
+export type CacheWarmingSetting = "auto" | CacheWarmingMode;
+
+export type KnobValue = number | CompactMode | FooterFormat | CacheWarmingSetting | "on" | "off";
 
 /** Settings persisted by the /context-fold config menu (same keys in the JSON file). */
 export interface SavedSettings {
@@ -28,8 +32,10 @@ export interface SavedSettings {
 	compact?: CompactMode;
 	footerFormat?: FooterFormat;
 	reconTokens?: number;
+	cacheTtlMs?: number;
 	cacheIdleMinutes?: number;
 	confirmColdPrompt?: "on" | "off";
+	cacheWarming?: CacheWarmingSetting;
 	providerCacheIdleMinutes?: Record<string, number>;
 }
 
@@ -82,6 +88,30 @@ export const KNOBS: readonly KnobSpec[] = [
 		choices: ["off", "on"],
 		live: true,
 		parse: (raw) => raw === "on" || raw === "off" ? raw : undefined,
+		format: plain,
+	},
+	{
+		key: "cacheTtlMs",
+		env: "CONTEXTFOLD_CACHE_TTL_MS",
+		label: "Cache TTL override (ms)",
+		hint: "fallback prompt-cache lifetime when the model declares no usable tier; 0 disables expiry folding",
+		def: 0,
+		live: true,
+		parse: nonNegative,
+		format: offOrNumber,
+	},
+	{
+		key: "cacheWarming",
+		env: "CONTEXTFOLD_CACHE_WARMING",
+		label: "Pi cache warming",
+		hint: "auto reads Pi's setting; idle disables expiry; streaming gates it inside active tool loops",
+		def: "auto",
+		choices: ["auto", "off", "streaming", "idle"],
+		live: true,
+		parse: (raw) => {
+			const m = raw.toLowerCase();
+			return m === "auto" || m === "off" || m === "streaming" || m === "idle" ? m : undefined;
+		},
 		format: plain,
 	},
 	{
@@ -243,6 +273,29 @@ export function parseSavedSettings(json: unknown): SavedSettings {
 	return saved;
 }
 
+/** The runtime ctx slice needed to read Pi's cache-warming setting (not on every host's type). */
+export interface CacheWarmingContext {
+	getSettings?: () => { cacheWarming?: unknown } | undefined;
+}
+
+/**
+ * Effective cache-warming mode. `auto` reads Pi's global `cacheWarming` setting through the
+ * extension API's real `getSettings()`. Hosts that do not expose it fall back to "off" so expiry
+ * folding stays usable; the config knob overrides either way. Only `idle` warming keeps a prefix
+ * alive across an idle gap; `streaming` warms during active runs and does not gate expiry.
+ */
+export function resolveCacheWarming(saved: SavedSettings, ctx: CacheWarmingContext = {}): CacheWarmingMode {
+	const choice = resolveKnob(knob("cacheWarming"), saved).value as CacheWarmingSetting;
+	if (choice !== "auto") return choice;
+	try {
+		const mode = ctx.getSettings?.()?.cacheWarming;
+		if (mode === "off" || mode === "streaming" || mode === "idle") return mode;
+	} catch {
+		/* a settings read failure must not cost the turn */
+	}
+	return "off";
+}
+
 /** How the extension answers Pi's hard compaction, plus the other adapter-level settings. */
 export interface AdapterConfig {
 	ladder: LadderConfig;
@@ -250,6 +303,8 @@ export interface AdapterConfig {
 	reconTokens: number;
 	compact: CompactMode;
 	footerFormat: FooterFormat;
+	/** Fallback prompt-cache lifetime in milliseconds; 0 means the model metadata must supply it. */
+	cacheTtlMs: number;
 }
 
 export const ADAPTER_DEFAULTS: AdapterConfig = {
@@ -257,6 +312,7 @@ export const ADAPTER_DEFAULTS: AdapterConfig = {
 	reconTokens: 18_000,
 	compact: "det",
 	footerFormat: "full",
+	cacheTtlMs: 0,
 };
 
 export function configFromEnv(saved: SavedSettings = {}): Partial<FoldConfig> {
@@ -285,5 +341,6 @@ export function adapterConfigFromEnv(saved: SavedSettings = {}): AdapterConfig {
 	const reconTokens = resolveKnob(knob("reconTokens"), saved).value as number;
 	const compact = resolveKnob(knob("compact"), saved).value as CompactMode;
 	const footerFormat = resolveKnob(knob("footerFormat"), saved).value as FooterFormat;
-	return { ladder, reconTokens, compact, footerFormat };
+	const cacheTtlMs = resolveKnob(knob("cacheTtlMs"), saved).value as number;
+	return { ladder, reconTokens, compact, footerFormat, cacheTtlMs };
 }
