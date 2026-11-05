@@ -42,34 +42,6 @@ import { loadSavedSettings, runSettingsMenu, settingsReport } from "./settings";
  */
 const PROVIDERS_HOLDING_CONTEXT: ReadonlySet<string> = new Set(["pi-with-claude"]);
 
-/** A user message after a tool result or an unfinished tool call is steering inside an active run. */
-function activeRun(messages: readonly { role?: string; content?: unknown }[]): boolean {
-	const last = messages.at(-1);
-	if (!last) return false;
-	if (last.role !== "user") return true;
-	const prev = messages.at(-2);
-	if (prev?.role === "toolResult") return true;
-	return (
-		prev?.role === "assistant" &&
-		Array.isArray(prev.content) &&
-		prev.content.some((part) => (part as { type?: string })?.type === "toolCall")
-	);
-}
-
-/** Newest persisted usage entry, including Pi's `cache_warm` refreshes. */
-function latestCacheActivityAt(ctx: {
-	sessionManager: { getBranch(): readonly { type?: string; timestamp?: unknown }[] };
-}): number | null {
-	const branch = ctx.sessionManager.getBranch();
-	for (let i = branch.length - 1; i >= 0; i--) {
-		const entry = branch[i];
-		if (entry?.type !== "usage") continue;
-		const at = typeof entry.timestamp === "number" ? entry.timestamp : Date.parse(String(entry.timestamp));
-		return Number.isFinite(at) ? at : null;
-	}
-	return null;
-}
-
 export default function contextFold(pi: ExtensionAPI): void {
 	// MASTER kill switch: CONTEXTFOLD=0/off/false disables the whole extension — no hooks, no
 	// tools, no folding — without changing the installed package.
@@ -111,18 +83,17 @@ export default function contextFold(pi: ExtensionAPI): void {
 	const debug = debugEnabled();
 	const dumpPath = process.env.CONTEXTFOLD_DUMP?.trim() || null;
 	const telemetry = new CacheTelemetry();
-	// Learned, never persisted: the latest response timestamp and the cache tier its write chose.
 	const cacheExpiry = new CacheExpiryTracker();
 	const evaluateCacheExpiry = (
 		model: { promptCache?: { short?: number; long?: number } } | undefined,
-		activeRun = false,
+		active = false,
 	) =>
 		cacheExpiry.evaluate({
 			enabled: acfg.cacheExpiry !== "off",
 			model,
 			ttlOverrideMs: acfg.cacheTtlMs,
-			cacheWarming: resolveCacheWarming(savedSettings, pi),
-			activeRun,
+			cacheWarming: resolveCacheWarming(pi),
+			activeRun: active,
 		});
 	engine.onLayerCommit = (layer) => {
 		try {
@@ -385,17 +356,14 @@ export default function contextFold(pi: ExtensionAPI): void {
 		try {
 			ensureLedger(ctx);
 			lastContextWindow = ctx.getContextUsage()?.contextWindow ?? lastContextWindow;
-			// Ladder cold branch: no live cache read observed after a few turns ⇒ there is no warm
-			// prefix to protect, so the ladder folds earlier and more freely (measured, not assumed).
 			const t = telemetry.snapshot();
 			const noCacheEver = t.turns >= 3 && t.totals.cacheRead === 0;
-			// Cache-warming refreshes are persisted usage entries, not assistant messages. Take the
-			// newest one so a long tool call cannot look expired after warming just refreshed it.
-			const activityAt = latestCacheActivityAt(ctx);
-			if (activityAt !== null) cacheExpiry.noteActivity(activityAt);
-			// Expiry check runs at request assembly, before sending: an elapsed model TTL feeds a
-			// separate one-step fold trigger, never a post-send fold or a probe request.
-			const expiry = evaluateCacheExpiry(ctx.model, activeRun(event.messages));
+			const usageEntry = [...ctx.sessionManager.getBranch()].reverse().find((e) => e.type === "usage"); // includes cache_warm
+			if (usageEntry) cacheExpiry.noteActivity(typeof usageEntry.timestamp === "number" ? usageEntry.timestamp : Date.parse(String(usageEntry.timestamp)));
+			const last = event.messages.at(-1);
+			// A user tail after a tool result is steering, not a settled turn.
+			const active = last !== undefined && (last.role !== "user" || event.messages.at(-2)?.role === "toolResult");
+			const expiry = evaluateCacheExpiry(ctx.model, active);
 			ladderPolicy.setCold(noCacheEver);
 			ladderPolicy.setExpired(expiry.expired);
 			if (debug && expiry.expired) {

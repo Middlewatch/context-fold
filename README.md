@@ -367,7 +367,6 @@ shadowing when it applies.
 | `CONTEXTFOLD_TAIL` | `20000` | Protected-tail target: the newest ~N tokens never fold (clamped to half the budget). |
 | `CONTEXTFOLD_CACHE_EXPIRY` | `on` | Fold one ladder step when the model-declared prompt-cache TTL has elapsed before a request. |
 | `CONTEXTFOLD_CACHE_TTL_MS` | `0` | Fallback TTL when the model declares none; `0`/`auto` uses model metadata. |
-| `CONTEXTFOLD_CACHE_WARMING` | `auto` | `auto` reads Pi; `idle` gates expiry off, `streaming` gates it inside active tool loops. |
 | `CONTEXTFOLD_COMPACT` | `det` | Hard-compaction answer: `det` = deterministic seed-index summary; `native` = Pi stock. |
 | `CONTEXTFOLD_FOOTER_FORMAT` | `full` | Footer status line: `full` = count, masked tokens, and the trigger gauge; `compact` = count and warnings only. |
 | `CONTEXTFOLD_RECON_TOKENS` | `18000` | Reconstruction estimate used by the reset flag (input-token equivalents). |

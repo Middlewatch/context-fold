@@ -91,9 +91,7 @@ export class FoldLadderPolicy implements FoldPolicy {
 			view.liveTokens > view.budget ||
 			(view.reportedTokens !== undefined && view.reportedBudget !== undefined && view.reportedTokens > view.reportedBudget);
 		const thresholdHit = cw > 0 && fraction >= foldAt && savings >= stepTokens;
-		// Expiry is a separate, cheaper trigger: the cache is already gone, so the only
-		// question is whether one ladder step of maskable mass is worth folding. It never
-		// forces a fold below the step, and it folds only that step, not the whole view.
+		// Expiry folds exactly one step; cap and threshold still fold everything.
 		const expiryHit = this.expired && cw > 0 && savings >= stepTokens;
 
 		if (this.providerHoldsContext) {
@@ -129,7 +127,6 @@ export class FoldLadderPolicy implements FoldPolicy {
 		} else if (thresholdHit) {
 			trigger = "threshold";
 		} else {
-			// Oldest eligible blocks first, stopping as soon as one ladder step is bought.
 			trigger = "expiry";
 			selected = [];
 			selectedSavings = 0;
@@ -150,8 +147,6 @@ export class FoldLadderPolicy implements FoldPolicy {
 				live_tokens: projected,
 				usage_fraction: round3(fraction),
 				fold_at: round3(foldAt),
-				// The expiry branch deliberately leaves maskable mass for later; the other
-				// branches exhaust it until new observations land.
 				maskable_tokens: savings - selectedSavings,
 				step_tokens: stepTokens,
 				irreducible_floor: irreducibleFloor(view.blocks),

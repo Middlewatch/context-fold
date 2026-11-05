@@ -16,10 +16,7 @@ export type CompactMode = "det" | "native";
 /** Footer status line: `full` adds the trigger gauge; `compact` shows the count and warnings only. */
 export type FooterFormat = "full" | "compact";
 
-/** `auto` reads Pi's own setting; the explicit modes override it for this extension. */
-export type CacheWarmingSetting = "auto" | CacheWarmingMode;
-
-export type KnobValue = number | CompactMode | FooterFormat | CacheWarmingSetting | "on" | "off";
+export type KnobValue = number | CompactMode | FooterFormat | "on" | "off";
 
 /** Settings persisted by the /context-fold config menu (same keys in the JSON file). */
 export interface SavedSettings {
@@ -36,7 +33,6 @@ export interface SavedSettings {
 	cacheIdleMinutes?: number;
 	confirmColdPrompt?: "on" | "off";
 	cacheExpiry?: "on" | "off";
-	cacheWarming?: CacheWarmingSetting;
 	providerCacheIdleMinutes?: Record<string, number>;
 }
 
@@ -112,20 +108,6 @@ export const KNOBS: readonly KnobSpec[] = [
 		live: true,
 		parse: (raw) => raw.trim().toLowerCase() === "auto" ? 0 : nonNegative(raw),
 		format: autoOrNumber,
-	},
-	{
-		key: "cacheWarming",
-		env: "CONTEXTFOLD_CACHE_WARMING",
-		label: "Pi cache warming",
-		hint: "auto reads Pi's setting; idle disables expiry; streaming gates it inside active tool loops",
-		def: "auto",
-		choices: ["auto", "off", "streaming", "idle"],
-		live: true,
-		parse: (raw) => {
-			const m = raw.toLowerCase();
-			return m === "auto" || m === "off" || m === "streaming" || m === "idle" ? m : undefined;
-		},
-		format: plain,
 	},
 	{
 		key: "foldAt",
@@ -286,20 +268,10 @@ export function parseSavedSettings(json: unknown): SavedSettings {
 	return saved;
 }
 
-/** The runtime ctx slice needed to read Pi's cache-warming setting (not on every host's type). */
-export interface CacheWarmingContext {
-	getSettings?: () => { cacheWarming?: unknown } | undefined;
-}
-
-/**
- * Effective cache-warming mode. `auto` reads Pi's global `cacheWarming` setting through the
- * extension API's real `getSettings()`. Hosts that do not expose it fall back to "off" so expiry
- * folding stays usable; the config knob overrides either way. Only `idle` warming keeps a prefix
- * alive across an idle gap; `streaming` warms during active runs and does not gate expiry.
- */
-export function resolveCacheWarming(saved: SavedSettings, ctx: CacheWarmingContext = {}): CacheWarmingMode {
-	const choice = resolveKnob(knob("cacheWarming"), saved).value as CacheWarmingSetting;
-	if (choice !== "auto") return choice;
+/** Pi's cache-warming setting; absent/unknown is treated as no warming. */
+export function resolveCacheWarming(
+	ctx: { getSettings?: () => { cacheWarming?: unknown } | undefined } = {},
+): CacheWarmingMode {
 	try {
 		const mode = ctx.getSettings?.()?.cacheWarming;
 		if (mode === "off" || mode === "streaming" || mode === "idle") return mode;

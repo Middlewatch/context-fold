@@ -35,7 +35,7 @@ describe("cache expiry tier selection", () => {
 	it("selects the short tier and expires only after its TTL", () => {
 		const clock = fakeClock();
 		const expiry = new CacheExpiryTracker(clock.now);
-		expiry.record({ cacheRead: 20_000, cacheWrite: 5_000 });
+		expiry.record({ cacheWrite: 5_000 });
 
 		clock.advance(299_999);
 		expect(evaluate(expiry, SHORT)).toMatchObject({ expired: false, ttlMs: 300_000, tier: "short" });
@@ -57,7 +57,7 @@ describe("cache expiry tier selection", () => {
 		expect(evaluate(expiry, BOTH).expired).toBe(false);
 
 		// A read-only response must not downgrade the tier chosen by the write.
-		expiry.record({ cacheRead: 26_000 });
+		expiry.record({});
 		clock.advance(3_600_000);
 		expect(evaluate(expiry, BOTH)).toMatchObject({ expired: false, tier: "long" });
 
@@ -71,10 +71,10 @@ describe("cache expiry tier selection", () => {
 		expect(evaluate(expiry, SHORT)).toMatchObject({ tier: "short", ttlMs: 300_000 });
 	});
 
-	it("uses the configured TTL only when cache usage is observed but the model declares none", () => {
+	it("uses the configured TTL when the model declares none", () => {
 		const clock = fakeClock();
 		const expiry = new CacheExpiryTracker(clock.now);
-		expiry.record({ cacheRead: 1_000 });
+		expiry.record({});
 		expect(evaluate(expiry, undefined, { ttlOverrideMs: 600_000 })).toMatchObject({
 			enabled: true,
 			ttlMs: 600_000,
@@ -86,21 +86,20 @@ describe("cache expiry tier selection", () => {
 		expect(evaluate(expiry, undefined, { ttlOverrideMs: 600_000 }).expired).toBe(true);
 	});
 
-	it("no cache counters and no model TTL disables expiry folding, even with an override", () => {
+	it("an explicit override enables expiry without model metadata", () => {
 		const clock = fakeClock();
 		const expiry = new CacheExpiryTracker(clock.now);
-		expiry.record({ cacheRead: 0, cacheWrite: 0 });
-		clock.advance(10_000_000);
+		expiry.record({});
+		clock.advance(600_001);
 
 		const decision = evaluate(expiry, undefined, { ttlOverrideMs: 600_000 });
-		expect(decision).toMatchObject({ enabled: false, expired: false, ttlMs: null, tier: null });
-		expect(decision.reason).toContain("no cache usage");
+		expect(decision).toMatchObject({ enabled: true, expired: true, ttlMs: 600_000, tier: "configured" });
 	});
 
 	it("model TTL metadata alone is enough to enable expiry folding", () => {
 		const clock = fakeClock();
 		const expiry = new CacheExpiryTracker(clock.now);
-		expiry.record({ cacheRead: 0, cacheWrite: 0 });
+		expiry.record({});
 		clock.advance(300_001);
 		expect(evaluate(expiry, SHORT).expired).toBe(true);
 	});
@@ -117,7 +116,7 @@ describe("cache warming gate", () => {
 	it("idle warming disables expiry folding; streaming does not", () => {
 		const clock = fakeClock();
 		const expiry = new CacheExpiryTracker(clock.now);
-		expiry.record({ cacheRead: 20_000, cacheWrite: 5_000 });
+		expiry.record({ cacheWrite: 5_000 });
 		clock.advance(10_000_000);
 
 		// Streaming warms only during active runs; a user-idle gap still expires normally.
@@ -137,7 +136,7 @@ describe("reset", () => {
 	it("cache-warm activity moves the expiry clock", () => {
 		const clock = fakeClock();
 		const expiry = new CacheExpiryTracker(clock.now);
-		expiry.record({ cacheRead: 20_000 });
+		expiry.record({});
 		clock.advance(299_000);
 		expiry.noteActivity(clock.now());
 		clock.advance(120_000);
@@ -146,10 +145,10 @@ describe("reset", () => {
 
 	it("can be disabled explicitly", () => {
 		const expiry = new CacheExpiryTracker(fakeClock().now);
-		expiry.record({ cacheRead: 20_000 });
+		expiry.record({});
 		expect(evaluate(expiry, SHORT, { enabled: false })).toMatchObject({ enabled: false, expired: false });
 	});
-	it("forgets the timestamp, tier, and cache-use evidence", () => {
+	it("forgets the timestamp and tier", () => {
 		const clock = fakeClock();
 		const expiry = new CacheExpiryTracker(clock.now);
 		expiry.record({ cacheWrite: 5_000, cacheWrite1h: 5_000 });
@@ -160,9 +159,7 @@ describe("reset", () => {
 		const afterReset = evaluate(expiry, BOTH);
 		expect(afterReset).toMatchObject({ expired: false, ttlMs: 300_000 });
 		expect(afterReset.reason).toContain("no response observed yet");
-		// No TTL and the cache-use evidence reset: the configured fallback cannot re-enable it alone.
 		const configured = evaluate(expiry, undefined, { ttlOverrideMs: 600_000 });
-		expect(configured).toMatchObject({ enabled: false, ttlMs: null });
-		expect(configured.reason).toContain("no cache usage");
+		expect(configured).toMatchObject({ enabled: true, ttlMs: 600_000, tier: "configured" });
 	});
 });

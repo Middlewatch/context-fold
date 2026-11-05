@@ -186,11 +186,9 @@ describe("cache warning settings", () => {
 		expect(knob("confirmColdPrompt").parse("maybe")).toBeUndefined();
 	});
 
-	it("cache warming auto reads Pi's setting and an explicit knob overrides it", () => {
-		expect(resolveCacheWarming({}, { getSettings: () => ({ cacheWarming: "off" }) })).toBe("off");
-		expect(resolveCacheWarming({}, { getSettings: () => ({ cacheWarming: "streaming" }) })).toBe("streaming");
-		expect(resolveCacheWarming({ cacheWarming: "off" }, { getSettings: () => ({ cacheWarming: "streaming" }) })).toBe("off");
-		// An unreadable host setting falls back to off, where the config knob is the only gate.
-		expect(resolveCacheWarming({}, {})).toBe("off");
+	it("reads Pi's cache-warming setting", () => {
+		expect(resolveCacheWarming({ getSettings: () => ({ cacheWarming: "off" }) })).toBe("off");
+		expect(resolveCacheWarming({ getSettings: () => ({ cacheWarming: "streaming" }) })).toBe("streaming");
+		expect(resolveCacheWarming({})).toBe("off");
 	});
 });
