@@ -70,6 +70,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 		acfg.reconTokens = a.reconTokens;
 		acfg.compact = a.compact;
 		acfg.footerFormat = a.footerFormat;
+		acfg.cacheExpiry = a.cacheExpiry;
 		acfg.cacheTtlMs = a.cacheTtlMs;
 		ladderPolicy.setConfig(a.ladder);
 		engine.setConfig({
