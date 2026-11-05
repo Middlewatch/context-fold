@@ -35,6 +35,7 @@ export interface SavedSettings {
 	cacheTtlMs?: number;
 	cacheIdleMinutes?: number;
 	confirmColdPrompt?: "on" | "off";
+	cacheExpiry?: "on" | "off";
 	cacheWarming?: CacheWarmingSetting;
 	providerCacheIdleMinutes?: Record<string, number>;
 }
@@ -67,6 +68,7 @@ const nonNegative = (raw: string): number | undefined => {
 };
 const plain = (v: KnobValue): string => String(v);
 const offOrNumber = (v: KnobValue): string => (v === 0 ? "off" : String(v));
+const autoOrNumber = (v: KnobValue): string => (v === 0 ? "auto" : String(v));
 
 export const KNOBS: readonly KnobSpec[] = [
 	{
@@ -91,14 +93,25 @@ export const KNOBS: readonly KnobSpec[] = [
 		format: plain,
 	},
 	{
+		key: "cacheExpiry",
+		env: "CONTEXTFOLD_CACHE_EXPIRY",
+		label: "Cache-expiry folding",
+		hint: "fold one ladder step when the provider prompt-cache TTL has elapsed before a request",
+		def: "on",
+		choices: ["off", "on"],
+		live: true,
+		parse: (raw) => raw === "on" || raw === "off" ? raw : undefined,
+		format: plain,
+	},
+	{
 		key: "cacheTtlMs",
 		env: "CONTEXTFOLD_CACHE_TTL_MS",
 		label: "Cache TTL override (ms)",
-		hint: "fallback prompt-cache lifetime when the model declares no usable tier; 0 disables expiry folding",
+		hint: "0/auto uses the model's promptCache; set a fallback only when the model declares none",
 		def: 0,
 		live: true,
-		parse: nonNegative,
-		format: offOrNumber,
+		parse: (raw) => raw.trim().toLowerCase() === "auto" ? 0 : nonNegative(raw),
+		format: autoOrNumber,
 	},
 	{
 		key: "cacheWarming",
@@ -303,6 +316,8 @@ export interface AdapterConfig {
 	reconTokens: number;
 	compact: CompactMode;
 	footerFormat: FooterFormat;
+	/** Cache-expiry folding is opt-out; the TTL itself comes from the model or the override. */
+	cacheExpiry: "on" | "off";
 	/** Fallback prompt-cache lifetime in milliseconds; 0 means the model metadata must supply it. */
 	cacheTtlMs: number;
 }
@@ -312,6 +327,7 @@ export const ADAPTER_DEFAULTS: AdapterConfig = {
 	reconTokens: 18_000,
 	compact: "det",
 	footerFormat: "full",
+	cacheExpiry: "on",
 	cacheTtlMs: 0,
 };
 
@@ -341,6 +357,7 @@ export function adapterConfigFromEnv(saved: SavedSettings = {}): AdapterConfig {
 	const reconTokens = resolveKnob(knob("reconTokens"), saved).value as number;
 	const compact = resolveKnob(knob("compact"), saved).value as CompactMode;
 	const footerFormat = resolveKnob(knob("footerFormat"), saved).value as FooterFormat;
+	const cacheExpiry = resolveKnob(knob("cacheExpiry"), saved).value as "on" | "off";
 	const cacheTtlMs = resolveKnob(knob("cacheTtlMs"), saved).value as number;
-	return { ladder, reconTokens, compact, footerFormat, cacheTtlMs };
+	return { ladder, reconTokens, compact, footerFormat, cacheExpiry, cacheTtlMs };
 }

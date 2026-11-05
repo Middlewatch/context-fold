@@ -34,6 +34,8 @@ export interface CacheUsageLike {
 }
 
 export interface CacheExpiryInput {
+	/** Explicit switch; undefined/true means enabled. */
+	enabled?: boolean;
 	model?: CacheModelMeta | null;
 	/** Explicit fallback lifetime when the model declares no usable tier. 0/undefined = none. */
 	ttlOverrideMs?: number;
@@ -90,7 +92,16 @@ export class CacheExpiryTracker {
 		this.writeTier = null;
 	}
 
+	/** A cache-warming refresh is cache activity too; it must move the expiry clock. */
+	noteActivity(at: number): void {
+		if (!Number.isFinite(at) || at <= 0) return;
+		if (this.lastResponseAt === null || at > this.lastResponseAt) this.lastResponseAt = at;
+	}
+
 	evaluate(input: CacheExpiryInput): CacheExpiryDecision {
+		if (input.enabled === false) {
+			return { enabled: false, expired: false, ttlMs: null, tier: null, reason: "cache-expiry folding is off" };
+		}
 		// Pi's "idle" warming can keep the prefix alive between runs, so an idle gap may not
 		// mean the cache is cold. "streaming" only warms during active runs; a user-idle gap
 		// still expires normally, so it must not disable expiry folding.

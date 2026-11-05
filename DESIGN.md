@@ -106,6 +106,13 @@ the window, or 25 % when telemetry shows the session has never had a live cache 
 maskable mass is worth at least one ladder step (~12 % of the window). Crossing the budget cap is
 an urgent event regardless of ladder position.
 
+An elapsed provider prompt-cache TTL is a separate trigger. Before a request, the adapter compares
+the latest cache activity against the model's `promptCache` tier (or the configured override). If it
+has expired, the policy folds one ladder step, oldest eligible blocks first, and stops as soon as
+~12 % of the window is saved. It does not require the usage threshold and does not fold the whole
+view. `idle` cache warming gates this trigger off because it can keep the prefix warm between runs;
+`streaming` warming gates it only inside an active tool loop.
+
 A transport that holds the conversation itself pauses the ladder. Every response from such a
 transport books the whole prompt as cache read with nothing prefilled, where a stateless API
 prefills at least the new message every turn. The adapter measures that from two usage reports and

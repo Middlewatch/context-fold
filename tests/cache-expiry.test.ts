@@ -21,7 +21,12 @@ const BOTH: CacheModelMeta = { promptCache: { short: 300, long: 3600 } };
 function evaluate(
 	expiry: CacheExpiryTracker,
 	model: CacheModelMeta | undefined,
-	extra: { ttlOverrideMs?: number; cacheWarming?: "off" | "streaming" | "idle"; activeRun?: boolean } = {},
+	extra: {
+		ttlOverrideMs?: number;
+		cacheWarming?: "off" | "streaming" | "idle";
+		activeRun?: boolean;
+		enabled?: boolean;
+	} = {},
 ) {
 	return expiry.evaluate({ model, cacheWarming: "off", ...extra });
 }
@@ -129,6 +134,21 @@ describe("cache warming gate", () => {
 });
 
 describe("reset", () => {
+	it("cache-warm activity moves the expiry clock", () => {
+		const clock = fakeClock();
+		const expiry = new CacheExpiryTracker(clock.now);
+		expiry.record({ cacheRead: 20_000 });
+		clock.advance(299_000);
+		expiry.noteActivity(clock.now());
+		clock.advance(120_000);
+		expect(evaluate(expiry, SHORT).expired).toBe(false);
+	});
+
+	it("can be disabled explicitly", () => {
+		const expiry = new CacheExpiryTracker(fakeClock().now);
+		expiry.record({ cacheRead: 20_000 });
+		expect(evaluate(expiry, SHORT, { enabled: false })).toMatchObject({ enabled: false, expired: false });
+	});
 	it("forgets the timestamp, tier, and cache-use evidence", () => {
 		const clock = fakeClock();
 		const expiry = new CacheExpiryTracker(clock.now);

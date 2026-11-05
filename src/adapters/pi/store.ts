@@ -57,7 +57,7 @@ export interface FoldEventReport {
 	/** The committed layer's seq. */
 	seq: number;
 	/** Why the policy folded. */
-	trigger: "threshold" | "cap";
+	trigger: "threshold" | "cap" | "expiry";
 	/** Ids masked by THIS event. */
 	maskedIds: string[];
 	/** Every block in this turn's view, full content — the extractor's span input. */
@@ -328,7 +328,8 @@ export class ContextFoldEngine {
 		if (entries.length === 0) return [];
 
 		const seq = this.lastLayerSeq + 1;
-		const trigger = this.lastStatus?.metrics?.trigger === "cap" ? "cap" : "threshold";
+		const t = this.lastStatus?.metrics?.trigger;
+		const trigger = t === "cap" ? "cap" : t === "expiry" ? "expiry" : "threshold";
 		const event = { seq, trigger, maskedIds: entries.map((e) => e.id), blocks, usage } satisfies FoldEventReport;
 		const res = this.onFoldEvent?.(event);
 		if (res === false) return [];

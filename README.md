@@ -8,7 +8,7 @@ Long agentic sessions stay under budget by folding stale content (mostly long ch
 calls) out of the model's view. Every fold is reversible, indexed, and computed without a model
 call. Built for Pi and supported on Pi only.
 
-**Requirements:** Node ≥ 22.19.0 and Pi ≥ 0.87.1.
+**Requirements:** Node ≥ 22.19.0 and Pi ≥ 1.2.0.
 
 ```bash
 pi install npm:context-fold
@@ -86,6 +86,10 @@ prompt-cache suffix, so mutations are batched at points where that cost is paid 
 
 - First fold when usage crosses ~45 % of the context window (25 % when telemetry shows the session
   has never had a live cache read, since there is no warm prefix worth protecting).
+- Cache expiry is a separate trigger: before a request, if the model-declared prompt-cache TTL has
+  elapsed, fold **one ladder step** — oldest eligible blocks until ~12 % of the window is saved —
+  even below the normal usage threshold. `CONTEXTFOLD_CACHE_EXPIRY=off` disables it. Pi's `idle`
+  cache warming gates it off; `streaming` warming gates it only inside an active tool loop.
 - A fold event masks stale `tool_result`/`thinking` blocks outside the protected tail to their
   deterministic digests, keeping detected risk lines verbatim, and commits them as a *frozen layer*
   whose bytes never change again. The context head stays byte-identical turn over turn, which is
@@ -188,8 +192,9 @@ append-only session file even once the raw message has left live context.
   The clock starts at the last successful response for the selected provider and model, restored
   from the active session branch. Typing, tool activity, and failed responses do not refresh it.
   Each idle interval gets one notice. A model with no recorded activity instead says
-  `cache unverified`. The token count is an estimate, including after compaction; elapsed time
-  does not prove cache expiry or guarantee that the provider will bill the whole context again.
+  `cache unverified`. The token count is an estimate, including after compaction; this warning is
+  advisory. The expiry *fold* trigger uses the model's `promptCache` TTL (or the configured
+  override), runs only before a request, and never claims that elapsed time alone proves expiry.
   Hosts that cannot estimate the retained context skip prediction while its size is unknown.
 - **Observed cold input**: after the agent settles, a final response with zero cached reads and
   at least 20k input tokens can trigger
@@ -308,7 +313,7 @@ extension. Context-fold watches provider usage for that outcome. Known interacti
 - **`codex-lite` does not rewrite context.** Its dialect mode replaces Pi's stock tools and appends
   prompt guidance. There is no fold bypass in that pairing; fresh shell output reaches the model
   before it can age into a ladder fold. Focused shell commands still reduce context growth.
-- **Pi 0.87.1 chains two context-transform phases.** Context-fold uses `context_with_system`
+- **Pi chains two context-transform phases.** Context-fold uses `context_with_system`
   and preserves system messages and tool declarations in place. The ordinary `context` hook
   collapses system patches when a handler replaces message objects, which would invalidate the
   prefix on later prompt changes. Other extensions and providers can still collapse that prefix.
@@ -360,6 +365,9 @@ shadowing when it applies.
 | `CONTEXTFOLD_BUDGET_FRACTION` | `0.75` | Budget = this fraction of the context window… |
 | `CONTEXTFOLD_BUDGET_CAP` | `200000` | …capped at this absolute ceiling (attention degrades at absolute depth). `0`/`off` disables. |
 | `CONTEXTFOLD_TAIL` | `20000` | Protected-tail target: the newest ~N tokens never fold (clamped to half the budget). |
+| `CONTEXTFOLD_CACHE_EXPIRY` | `on` | Fold one ladder step when the model-declared prompt-cache TTL has elapsed before a request. |
+| `CONTEXTFOLD_CACHE_TTL_MS` | `0` | Fallback TTL when the model declares none; `0`/`auto` uses model metadata. |
+| `CONTEXTFOLD_CACHE_WARMING` | `auto` | `auto` reads Pi; `idle` gates expiry off, `streaming` gates it inside active tool loops. |
 | `CONTEXTFOLD_COMPACT` | `det` | Hard-compaction answer: `det` = deterministic seed-index summary; `native` = Pi stock. |
 | `CONTEXTFOLD_FOOTER_FORMAT` | `full` | Footer status line: `full` = count, masked tokens, and the trigger gauge; `compact` = count and warnings only. |
 | `CONTEXTFOLD_RECON_TOKENS` | `18000` | Reconstruction estimate used by the reset flag (input-token equivalents). |
@@ -408,7 +416,7 @@ resubmission, and image preservation through the provider boundary in a 48-colum
 It uses a local throwing fixture provider, makes no network request, and prints the directory
 containing its screen captures.
 
-The unit suite also exercises Pi 0.87.1's real extension runner and session projection without
+The unit suite also exercises Pi 1.2.0's real extension runner and session projection without
 provider calls, including system patches, content edits, recovery cuts, and revision recall.
 
 The live scripts drive real Pi sessions against a real provider, so they cost money and need

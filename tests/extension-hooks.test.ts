@@ -136,6 +136,7 @@ function expirySession(): AgentMessage[] {
 		messages.push(assistantWithCalls([{ id: `e${i}`, name: "read" }]));
 		messages.push(bigResult(`e${i}`, 400));
 	}
+	messages.push(assistantText("done"));
 	messages.push(user("now the newest question"));
 	return messages;
 }

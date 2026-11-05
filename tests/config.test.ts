@@ -82,10 +82,17 @@ describe("knob parsers", () => {
 		expect(knob("reconTokens").parse("0")).toBeUndefined();
 	});
 
-	it("cache TTL override accepts 0/off and a millisecond value", () => {
+	it("cache TTL override accepts auto/0 and a millisecond value", () => {
+		expect(knob("cacheTtlMs").parse("auto")).toBe(0);
 		expect(knob("cacheTtlMs").parse("0")).toBe(0);
 		expect(knob("cacheTtlMs").parse("300000")).toBe(300_000);
 		expect(knob("cacheTtlMs").parse("-1")).toBeUndefined();
+	});
+
+	it("cache-expiry folding is an explicit on/off knob", () => {
+		expect(knob("cacheExpiry").parse("off")).toBe("off");
+		expect(knob("cacheExpiry").parse("on")).toBe("on");
+		expect(knob("cacheExpiry").parse("maybe")).toBeUndefined();
 	});
 
 	it("the removed spool-retention knob is gone from the table", () => {
@@ -118,6 +125,7 @@ describe("saved settings flow into the config builders", () => {
 		tail: 10_000,
 		foldAt: 0.35,
 		reconTokens: 9_000,
+		cacheExpiry: "off",
 		cacheTtlMs: 600_000,
 		compact: "native",
 		footerFormat: "compact",
@@ -146,6 +154,7 @@ describe("saved settings flow into the config builders", () => {
 		expect(acfg.compact).toBe("native");
 		expect(acfg.reconTokens).toBe(9_000);
 		expect(acfg.footerFormat).toBe("compact");
+		expect(acfg.cacheExpiry).toBe("off");
 		expect(acfg.cacheTtlMs).toBe(600_000);
 		expect(knob("footerFormat").parse("Full")).toBe("full");
 		expect(knob("footerFormat").parse("wide")).toBeUndefined();

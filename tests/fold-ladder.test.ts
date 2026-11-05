@@ -262,6 +262,30 @@ describe("discrete fold events", () => {
 		expect(out).toBe(messages);
 		expect(committed.length).toBe(0);
 	});
+	it("cache expiry folds only one ladder step, oldest first", () => {
+		const { e, policy, events } = ladderEngine();
+		const { messages, callIds } = session(6); // ~0.37 of an 80k window, below the 45% threshold
+		expect(e.process(messages, { contextWindow: 80_000, tokens: null })).toBe(messages);
+
+		policy.setExpired(true);
+		const out = e.process(messages, { contextWindow: 80_000, tokens: null });
+		expect(events).toHaveLength(1);
+		expect(events[0].trigger).toBe("expiry");
+
+		const folded = callIds.filter((id) => resultText(out, id).includes("FOLDED")).length;
+		expect(folded).toBeGreaterThan(0);
+		expect(folded).toBeLessThan(callIds.length);
+	});
+
+	it("cache expiry does not fold when one ladder step is not available", () => {
+		const { e, policy, events } = ladderEngine();
+		const { messages } = session(1); // below the 12%-of-window step
+		policy.setExpired(true);
+
+		const out = e.process(messages, { contextWindow: 80_000, tokens: null });
+		expect(out).toBe(messages);
+		expect(events).toHaveLength(0);
+	});
 });
 
 

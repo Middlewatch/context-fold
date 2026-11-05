@@ -3,6 +3,16 @@ Note: This is largely LLM written, I won't hand write much in here unless I have
 
 Notable changes to context-fold.
 
+## Unreleased
+
+### Added
+
+- Fold one ladder step when the provider prompt-cache TTL has elapsed before a request. The TTL
+  comes from the model's `promptCache` tier (`cacheWrite1h` selects long) or `CONTEXTFOLD_CACHE_TTL_MS`;
+  `CONTEXTFOLD_CACHE_EXPIRY=off` disables the trigger. `idle` cache warming gates it off and
+  `streaming` warming gates it only inside an active tool loop.
+- Require Pi 1.2.0 for the extension settings accessor used to read `cacheWarming`.
+
 ## 0.7.0 - 2026-10-13
 
 Minor bump because fold timing changes for one provider (see RELEASING.md).

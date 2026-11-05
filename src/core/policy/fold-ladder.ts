@@ -46,6 +46,8 @@ export class FoldLadderPolicy implements FoldPolicy {
 	private host: PolicyHost | null = null;
 	/** No live cache read observed yet (adapter feeds this from measured telemetry each turn). */
 	private cold = false;
+	/** The provider prompt cache has elapsed; fold one step now (adapter feeds this per request). */
+	private expired = false;
 	/** The transport holds the conversation itself, so a fold rewrites a copy the model never receives
 	 *  (adapter feeds this from measured usage, like `cold`). The ladder pauses while it holds. */
 	private providerHoldsContext = false;
@@ -63,6 +65,10 @@ export class FoldLadderPolicy implements FoldPolicy {
 
 	setCold(cold: boolean): void {
 		this.cold = cold;
+	}
+
+	setExpired(expired: boolean): void {
+		this.expired = expired;
 	}
 
 	setProviderHoldsContext(held: boolean): void {
@@ -85,6 +91,10 @@ export class FoldLadderPolicy implements FoldPolicy {
 			view.liveTokens > view.budget ||
 			(view.reportedTokens !== undefined && view.reportedBudget !== undefined && view.reportedTokens > view.reportedBudget);
 		const thresholdHit = cw > 0 && fraction >= foldAt && savings >= stepTokens;
+		// Expiry is a separate, cheaper trigger: the cache is already gone, so the only
+		// question is whether one ladder step of maskable mass is worth folding. It never
+		// forces a fold below the step, and it folds only that step, not the whole view.
+		const expiryHit = this.expired && cw > 0 && savings >= stepTokens;
 
 		if (this.providerHoldsContext) {
 			// Nothing this policy masks can reach the model, so even the cap branch stays quiet.
@@ -101,7 +111,7 @@ export class FoldLadderPolicy implements FoldPolicy {
 			});
 			return [];
 		}
-		if (!overCap && !thresholdHit) {
+		if (!overCap && !thresholdHit && !expiryHit) {
 			this.publishIdle(view, fraction, foldAt, savings, stepTokens);
 			return [];
 		}
@@ -111,27 +121,44 @@ export class FoldLadderPolicy implements FoldPolicy {
 			return [];
 		}
 
-		const trigger = overCap && !thresholdHit ? "cap" : "threshold";
-		const projected = view.liveTokens - savings;
+		let trigger: "cap" | "threshold" | "expiry";
+		let selected = eligible;
+		let selectedSavings = savings;
+		if (overCap && !thresholdHit) {
+			trigger = "cap";
+		} else if (thresholdHit) {
+			trigger = "threshold";
+		} else {
+			// Oldest eligible blocks first, stopping as soon as one ladder step is bought.
+			trigger = "expiry";
+			selected = [];
+			selectedSavings = 0;
+			for (const b of eligible) {
+				selected.push(b);
+				selectedSavings += b.tokens - b.foldedTokens;
+				if (selectedSavings >= stepTokens) break;
+			}
+		}
+
+		const projected = view.liveTokens - selectedSavings;
 		this.host?.setStatus(
-			`fold event (${trigger}): masking ${eligible.length} block${eligible.length === 1 ? "" : "s"}, ~${k(savings)} tok`,
+			`fold event (${trigger}): masking ${selected.length} block${selected.length === 1 ? "" : "s"}, ~${k(selectedSavings)} tok`,
 			{
 				fold_event: true,
 				trigger,
-				tokens_saved: savings,
+				tokens_saved: selectedSavings,
 				live_tokens: projected,
 				usage_fraction: round3(fraction),
 				fold_at: round3(foldAt),
-				// Post-fold position: every eligible block is in this command, so nothing maskable
-				// remains until new observations land. Published so the trigger gauge stays renderable
-				// on the turn a fold fires without special-casing this branch.
-				maskable_tokens: 0,
+				// The expiry branch deliberately leaves maskable mass for later; the other
+				// branches exhaust it until new observations land.
+				maskable_tokens: savings - selectedSavings,
 				step_tokens: stepTokens,
 				irreducible_floor: irreducibleFloor(view.blocks),
 				over_budget: projected > view.budget,
 			},
 		);
-		return [{ kind: "fold", ids: eligible.map((b) => b.id) }];
+		return [{ kind: "fold", ids: selected.map((b) => b.id) }];
 	}
 
 	private publishIdle(view: PolicyView, fraction: number, foldAt: number, savings: number, stepTokens: number): void {
