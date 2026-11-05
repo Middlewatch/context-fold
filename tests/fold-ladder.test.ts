@@ -60,7 +60,7 @@ describe("discrete fold events", () => {
 	it("below the first-fold threshold the context goes out untouched (append-only between events)", () => {
 		const { e, committed } = ladderEngine();
 		const { messages } = session(3); // ~15k live
-		const out = e.process(messages, { contextWindow: 80_000, tokens: null }); // ~0.19 of window
+		const out = e.process(messages, { contextWindow: 80_000, tokens: null }); // ~15k live → ~0.25 of the 60k budget
 		expect(out).toBe(messages);
 		expect(committed.length).toBe(0);
 	});
@@ -79,7 +79,7 @@ describe("discrete fold events", () => {
 	it("crossing the threshold fires ONE fold event: observations mask, intent and actions stay", () => {
 		const { e, committed, events } = ladderEngine();
 		const { messages, callIds } = session(8); // ~39k live
-		const out = e.process(messages, { contextWindow: 80_000, tokens: null }); // ~0.49 ≥ 0.45
+		const out = e.process(messages, { contextWindow: 80_000, tokens: null }); // ~39k live → ~0.65 of the 60k budget
 
 		expect(committed.length).toBe(1);
 		expect(events.length).toBe(1);
@@ -142,7 +142,8 @@ describe("discrete fold events", () => {
 
 	it("step spacing: over the threshold but with too little maskable mass, no event fires", () => {
 		const { e, committed } = ladderEngine();
-		// A huge (unmaskable) user brief + one small observation: fraction ≥ 0.45, savings ≪ step.
+		// A huge (unmaskable) user brief + one small observation: fraction ≥ 0.45 of the 60k
+		// budget, savings ≪ the 7.2k step.
 		const messages: AgentMessage[] = [
 			user("brief: " + "requirements ".repeat(12_000)), // ~39k tokens of user intent
 			assistantWithCalls([{ id: "c0", name: "read" }]),
@@ -172,12 +173,12 @@ describe("discrete fold events", () => {
 
 	it("cold branch: with no live cache read there is no prefix to protect — folds from 25 %", () => {
 		const { e, policy, committed } = ladderEngine();
-		const { messages } = session(6); // ~29k live → 0.29 of 100k
+		const { messages } = session(6); // ~29k live → ~0.39 of the 75k budget
 		policy.setCold(true);
 		e.process(messages, { contextWindow: 100_000, tokens: null });
 		expect(committed.length).toBe(1);
 
-		// Same session, warm: 0.29 < 0.45 → no event.
+		// Same session, warm: 0.39 < 0.45 → no event.
 		const warm = ladderEngine();
 		warm.policy.setCold(false);
 		warm.e.process(session(6).messages, { contextWindow: 100_000, tokens: null });
@@ -256,35 +257,82 @@ describe("discrete fold events", () => {
 
 	it("provider-reported usage drives the fraction when present", () => {
 		const { e, committed } = ladderEngine();
-		const { messages } = session(8); // estimator says ~0.49 of 80k
+		const { messages } = session(8); // estimator says ~0.65 of the 60k budget
 		// Provider says the context is actually tiny — trust it, no fold.
 		const out = e.process(messages, { contextWindow: 80_000, tokens: 8_000 });
 		expect(out).toBe(messages);
 		expect(committed.length).toBe(0);
 	});
-	it("cache expiry folds only one ladder step, oldest first", () => {
+	it("cache expiry folds every eligible block outside the tail, even below one step", () => {
 		const { e, policy, events } = ladderEngine();
-		const { messages, callIds } = session(6); // ~0.37 of an 80k window, below the 45% threshold
-		expect(e.process(messages, { contextWindow: 80_000, tokens: null })).toBe(messages);
+		const { messages, callIds } = session(6); // ~0.2 of the 150k budget
+		expect(e.process(messages, { contextWindow: 200_000, tokens: null })).toBe(messages);
 
 		policy.setExpired(true);
-		const out = e.process(messages, { contextWindow: 80_000, tokens: null });
+		const out = e.process(messages, { contextWindow: 200_000, tokens: null });
 		expect(events).toHaveLength(1);
 		expect(events[0].trigger).toBe("expiry");
 
 		const folded = callIds.filter((id) => resultText(out, id).includes("FOLDED")).length;
 		expect(folded).toBeGreaterThan(0);
 		expect(folded).toBeLessThan(callIds.length);
+		// The newest result is first-delivery, so the hold rule keeps it even with a tiny tail.
+		expect(resultText(out, callIds.at(-1)!)).not.toContain("FOLDED");
 	});
 
-	it("cache expiry does not fold when one ladder step is not available", () => {
-		const { e, policy, events } = ladderEngine();
-		const { messages } = session(1); // below the 12%-of-window step
+	it("cache expiry folds an eligible block below one step when the prefix is gone", () => {
+		const { e, policy, events } = ladderEngine({ tailTarget: 0 });
+		const messages: AgentMessage[] = [
+			user("read it"),
+			assistantWithCalls([{ id: "c0", name: "read" }]),
+			bigResult("c0", 300), // ~4k — below the 18k step but above the 2k floor
+			assistantText("done", "r1"),
+			user("go"),
+		];
 		policy.setExpired(true);
 
-		const out = e.process(messages, { contextWindow: 80_000, tokens: null });
+		const out = e.process(messages, { contextWindow: 200_000, tokens: null });
+		expect(events).toHaveLength(1);
+		expect(events[0].trigger).toBe("expiry");
+		expect(resultText(out, "c0")).toContain("FOLDED");
+	});
+
+	it("cache expiry still skips a trivial fold below the floor", () => {
+		const { e, policy, events } = ladderEngine({ tailTarget: 0 });
+		const messages: AgentMessage[] = [
+			user("read it"),
+			assistantWithCalls([{ id: "c0", name: "read" }]),
+			bigResult("c0", 10), // ~125 — below the 2k floor
+			assistantText("done", "r1"),
+			user("go"),
+		];
+		policy.setExpired(true);
+
+		const out = e.process(messages, { contextWindow: 200_000, tokens: null });
 		expect(out).toBe(messages);
 		expect(events).toHaveLength(0);
+	});
+
+	it("a 1M window uses the 200k budget, not the raw window", () => {
+		const cold = ladderEngine();
+		cold.policy.setCold(true);
+		cold.e.process(session(11).messages, { contextWindow: 1_000_000, tokens: null }); // ~55k ≥ 25% of 200k
+		expect(cold.committed.length).toBe(1);
+
+		const warm = ladderEngine();
+		warm.e.process(session(11).messages, { contextWindow: 1_000_000, tokens: null });
+		expect(warm.committed.length).toBe(0); // 55k < 45% of 200k
+
+		const over = ladderEngine();
+		over.e.process(session(19).messages, { contextWindow: 1_000_000, tokens: null }); // ~95k ≥ 45% of 200k
+		expect(over.committed.length).toBe(1);
+	});
+
+	it("a tiny window scales the budget down instead of dividing by zero", () => {
+		const { e, committed } = ladderEngine();
+		const out = e.process([user("hi")], { contextWindow: 130, tokens: null });
+		expect(out).toHaveLength(1);
+		expect(committed.length).toBe(0);
 	});
 });
 

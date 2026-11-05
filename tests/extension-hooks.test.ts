@@ -129,7 +129,7 @@ function heavySession(): AgentMessage[] {
 	return messages;
 }
 
-/** ~40k live tokens: past the cold threshold (25 %) but under the warm one (45 %) of 100k. */
+/** ~40k live tokens: past the cold threshold (25 %) but under the warm one (45 %) of the 150k budget. */
 function expirySession(): AgentMessage[] {
 	const messages: AgentMessage[] = [user("build the thing")];
 	for (let i = 0; i < 8; i++) {
@@ -237,11 +237,11 @@ describe.skipIf(!PI_PRESENT)("cache-expiry-aware folding", () => {
 		const s = await load({ cacheWarming: "off" });
 		const { ctx } = ctxFor({
 			model: { id: "cached", provider: "test", promptCache: { short: 300 } },
-			usage: { contextWindow: 100_000, tokens: null },
+			usage: { contextWindow: 200_000, tokens: null },
 		});
 		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
 
-		// ~40 % of a 100k window: under the warm 45 % threshold, over the cold 25 % one.
+		// ~27 % of the 150k budget: under the warm 45 % threshold, over the cold 25 % one.
 		vi.setSystemTime(BASE + 299_999);
 		const warm = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
 		expect(foldCount(warm)).toBe(0);
@@ -257,7 +257,7 @@ describe.skipIf(!PI_PRESENT)("cache-expiry-aware folding", () => {
 		const s = await load({ cacheWarming: "off" });
 		const { ctx } = ctxFor({
 			model: { id: "cached", provider: "test", promptCache: { short: 60, long: 3600 } },
-			usage: { contextWindow: 100_000, tokens: null },
+			usage: { contextWindow: 200_000, tokens: null },
 		});
 		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 0, cacheWrite: 5_000, cacheWrite1h: 5_000 }), ctx);
 
@@ -275,7 +275,7 @@ describe.skipIf(!PI_PRESENT)("cache-expiry-aware folding", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(BASE);
 		const s = await load({ cacheWarming: "off" });
-		const { ctx } = ctxFor({ usage: { contextWindow: 100_000, tokens: null } });
+		const { ctx } = ctxFor({ usage: { contextWindow: 200_000, tokens: null } });
 		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 0, cacheWrite: 0 }), ctx);
 
 		vi.setSystemTime(BASE + 3_600_001);
@@ -289,7 +289,7 @@ describe.skipIf(!PI_PRESENT)("cache-expiry-aware folding", () => {
 		const s = await load({ cacheWarming: "streaming" });
 		const { ctx } = ctxFor({
 			model: { id: "cached", provider: "test", promptCache: { short: 60 } },
-			usage: { contextWindow: 100_000, tokens: null },
+			usage: { contextWindow: 200_000, tokens: null },
 		});
 		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
 
@@ -304,8 +304,8 @@ describe.skipIf(!PI_PRESENT)("cache-expiry-aware folding", () => {
 		const s = await load({ cacheWarming: "streaming" });
 		const { ctx } = ctxFor({
 			model: { id: "cached", provider: "test", promptCache: { short: 60 } },
-			// 140k: the active session is above 25% cold but below the 45% warm fold.
-			usage: { contextWindow: 140_000, tokens: null },
+			// 200k window → 150k budget: the session is below the 45% warm fold, so only expiry could fire.
+			usage: { contextWindow: 200_000, tokens: null },
 		});
 		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
 
@@ -320,7 +320,7 @@ describe.skipIf(!PI_PRESENT)("cache-expiry-aware folding", () => {
 		const s = await load({ cacheWarming: "idle" });
 		const { ctx } = ctxFor({
 			model: { id: "cached", provider: "test", promptCache: { short: 60 } },
-			usage: { contextWindow: 100_000, tokens: null },
+			usage: { contextWindow: 200_000, tokens: null },
 		});
 		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
 
@@ -333,7 +333,7 @@ describe.skipIf(!PI_PRESENT)("cache-expiry-aware folding", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(BASE);
 		const s = await load({ cacheWarming: "off" });
-		const { ctx } = ctxFor({ usage: { contextWindow: 100_000, tokens: null } });
+		const { ctx } = ctxFor({ usage: { contextWindow: 200_000, tokens: null } });
 		for (let i = 0; i < 3; i++) {
 			await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 0, cacheWrite: 0 }), ctx);
 		}
@@ -348,7 +348,7 @@ describe.skipIf(!PI_PRESENT)("cache-expiry-aware folding", () => {
 		const s = await load({ cacheWarming: "off" });
 		const { ctx } = ctxFor({
 			model: { id: "cached2", provider: "test", promptCache: { short: 60 } },
-			usage: { contextWindow: 100_000, tokens: null },
+			usage: { contextWindow: 200_000, tokens: null },
 		});
 		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
 
@@ -776,7 +776,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 			user("now the newest question"),
 		];
 
-		// 40k/80k = 50% ≥ the 45% threshold, but only ~2.5k of maskable mass (< the 9.6k step):
+		// 40k/60k = 67% ≥ the 45% threshold, but only ~2.5k of maskable mass (< the 7.2k step):
 		// no fold fires, and the gauge shows progress toward the step instead of the usage threshold.
 		await s.hooks.get("context_with_system")!({ messages }, ctx);
 		expect(statuses["context-fold"]).toMatch(/next fold \S+\/\S+/);
@@ -788,7 +788,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		const { ctx, statuses } = ctxFor({ usage: { contextWindow: 80_000, tokens: 40_000 } });
 
 		// Pure conversation: no tool results or thinking anywhere, so the ladder has nothing to work
-		// with even though usage (50%) is past the 45% threshold. Still interim — a big tool result
+		// with even though usage (67% of the 60k budget) is past the 45% threshold. Still interim — a big tool result
 		// next turn would start filling the gauge — so it counts from zero rather than declaring
 		// folding impossible.
 		await s.hooks.get("context_with_system")!({ messages: [user("hi"), assistantText("a long answer"), user("more")] }, ctx);

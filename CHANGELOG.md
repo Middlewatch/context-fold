@@ -7,11 +7,20 @@ Notable changes to context-fold.
 
 ### Added
 
-- Fold one ladder step when the provider prompt-cache TTL has elapsed before a request. The TTL
-  comes from the model's `promptCache` tier (`cacheWrite1h` selects long) or `CONTEXTFOLD_CACHE_TTL_MS`;
-  `CONTEXTFOLD_CACHE_EXPIRY=off` disables the trigger. `idle` cache warming gates it off and
-  `streaming` warming gates it only inside an active tool loop.
+- Fold every eligible block outside the protected tail when the provider prompt-cache TTL has elapsed
+  before a request. The TTL comes from the model's `promptCache` tier (`cacheWrite1h` selects long) or
+  `CONTEXTFOLD_CACHE_TTL_MS`; `CONTEXTFOLD_CACHE_EXPIRY=off` disables the trigger. `idle` cache warming
+  gates it off and `streaming` warming gates it only inside an active tool loop.
 - Require Pi 1.2.0 for the extension settings accessor used to read `cacheWarming`.
+
+### Changed
+
+- The ladder's thresholds and step are now fractions of the fold budget (`min(200k, 0.75 × window)`),
+  not the raw model window. A 1M-window model now folds at 90k rather than waiting for the 200k
+  cap; on a 200k window the first fold moves from 90k to 67.5k.
+- Cold and expiry folds no longer wait for a full ladder step. With no warm prefix to protect, they
+  fold every eligible block outside the protected tail (floor min(2k, one step)) instead of folding
+  nothing when less than one step is available.
 
 ## 0.7.0 - 2026-10-13
 

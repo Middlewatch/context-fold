@@ -102,16 +102,17 @@ whose bytes never change again. The head of the context therefore stays byte-ide
 turn, which is what keeps prefix caches warm.
 
 A fold event fires when both hold: usage is past the first-fold threshold (by default at 45 % of
-the window, or 25 % when telemetry shows the session has never had a live cache read), and the
-maskable mass is worth at least one ladder step (~12 % of the window). Crossing the budget cap is
-an urgent event regardless of ladder position.
+the fold budget, or 25 % when telemetry shows the session has never had a live cache read), and the
+maskable mass is worth at least one ladder step (~12 % of the budget). Crossing the budget cap is
+an urgent event regardless of ladder position. The budget is `min(200k, 0.75 × window)`, so the
+thresholds and the step do not grow with a 1M window.
 
 An elapsed provider prompt-cache TTL is a separate trigger. Before a request, the adapter compares
 the latest cache activity against the model's `promptCache` tier (or the configured override). If it
-has expired, the policy folds one ladder step, oldest eligible blocks first, and stops as soon as
-~12 % of the window is saved. It does not require the usage threshold and does not fold the whole
-view. `idle` cache warming gates this trigger off because it can keep the prefix warm between runs;
-`streaming` warming gates it only inside an active tool loop.
+has expired, the policy folds every eligible block outside the protected tail (floor min(2k, one
+step)). It does not require the usage threshold or a full ladder step: the prefix is gone, so
+there is no suffix left to protect. `idle` cache warming gates this trigger off because it can keep
+the prefix warm between runs; `streaming` warming gates it only inside an active tool loop.
 
 A transport that holds the conversation itself pauses the ladder. Every response from such a
 transport books the whole prompt as cache read with nothing prefilled, where a stateless API

@@ -10,11 +10,14 @@
  * prefix-stable frozen layer whose bytes never change again.
  *
  * A fold event fires when BOTH hold:
- *   • usage ≥ the first-fold threshold (~45 % of the window; the cold branch lowers it — with no
- *     live cache read there is no prefix to protect, so fold earlier and more freely), and
- *   • the maskable mass is worth a fold (≥ step × window) — this is what spaces events: each
+ *   • usage ≥ the first-fold threshold (~45 % of the fold budget; the cold branch lowers it —
+ *     with no live cache read there is no prefix to protect, so fold earlier and more freely), and
+ *   • the maskable mass is worth a fold (≥ step × budget) — this is what spaces warm events: each
  *     fold must buy at least one ladder step, so a fresh fold can't re-fire on the next turn.
- * Crossing the budget cap (min(200k, fraction × window)) is an emergency event with no minimum.
+ * The budget is min(200k, fraction × window), so the thresholds do not grow with a 1M window.
+ * Crossing the budget cap is an emergency event with no minimum. A cold or expired prefix folds
+ * every eligible block (floor min(2k, one step)): the prefix is gone, so there is no suffix left
+ * to protect.
  *
  * What masks: stale tool_result and thinking blocks outside the protected tail — never user
  * intent, assistant conclusions, or tool_call records (the actions carry the implicit decisions).
@@ -26,9 +29,9 @@ import type { FoldCommand, FoldPolicy, PolicyHost, PolicyView, ViewBlock } from 
 import { isDurableId } from "../block";
 
 export interface LadderConfig {
-	/** First fold when usage ≥ this fraction of the context window. */
+	/** First fold when usage ≥ this fraction of the fold budget. */
 	foldAt: number;
-	/** A fold event must save at least this fraction of the window (spaces the events). */
+	/** A warm fold event must save at least this fraction of the budget (spaces the events). */
 	foldStep: number;
 	/** First-fold threshold when the session has never observed a live cache read. */
 	coldFoldAt: number;
@@ -76,23 +79,28 @@ export class FoldLadderPolicy implements FoldPolicy {
 	}
 
 	conduct(view: PolicyView): FoldCommand[] {
-		const cw = view.contextWindow ?? 0;
+		// The fold budget is the model-independent unit: min(200k, 0.75 × window), so a 1M window
+		// does not get a 1M-relative threshold or step.
+		const budget = view.budget;
 		// Provider-anchored usage when Pi has it; the chars÷4 estimator otherwise.
 		const used = view.reportedTokens ?? view.liveTokens;
-		const fraction = cw > 0 ? used / cw : 0;
+		const fraction = budget > 0 ? used / budget : 0;
 		const foldAt = this.cold ? Math.min(this.cfg.coldFoldAt, this.cfg.foldAt) : this.cfg.foldAt;
 
 		const eligible = view.blocks.filter(maskable);
 		let savings = 0;
 		for (const b of eligible) savings += b.tokens - b.foldedTokens;
 
-		const stepTokens = cw > 0 ? Math.floor(this.cfg.foldStep * cw) : Math.floor(this.cfg.foldStep * view.budget);
+		const stepTokens = budget > 0 ? Math.floor(this.cfg.foldStep * budget) : 0;
+		// A warm fold must buy a full step: it invalidates the cached suffix. A cold or expired
+		// prefix is already gone, so fold whatever is eligible rather than waiting for the step.
+		// The floor shrinks with the step on tiny budgets instead of swallowing it.
+		const minFoldTokens = Math.max(1, Math.min(2_000, stepTokens));
 		const overCap =
 			view.liveTokens > view.budget ||
 			(view.reportedTokens !== undefined && view.reportedBudget !== undefined && view.reportedTokens > view.reportedBudget);
-		const thresholdHit = cw > 0 && fraction >= foldAt && savings >= stepTokens;
-		// Expiry folds exactly one step; cap and threshold still fold everything.
-		const expiryHit = this.expired && cw > 0 && savings >= stepTokens;
+		const thresholdHit = budget > 0 && fraction >= foldAt && savings >= (this.cold ? minFoldTokens : stepTokens);
+		const expiryHit = this.expired && budget > 0 && savings >= minFoldTokens;
 
 		if (this.providerHoldsContext) {
 			// Nothing this policy masks can reach the model, so even the cap branch stays quiet.
@@ -120,22 +128,16 @@ export class FoldLadderPolicy implements FoldPolicy {
 		}
 
 		let trigger: "cap" | "threshold" | "expiry";
-		let selected = eligible;
-		let selectedSavings = savings;
-		if (overCap && !thresholdHit) {
+		if (overCap) {
 			trigger = "cap";
 		} else if (thresholdHit) {
 			trigger = "threshold";
 		} else {
 			trigger = "expiry";
-			selected = [];
-			selectedSavings = 0;
-			for (const b of eligible) {
-				selected.push(b);
-				selectedSavings += b.tokens - b.foldedTokens;
-				if (selectedSavings >= stepTokens) break;
-			}
 		}
+		// Every trigger folds the whole eligible set; the step/target only decides whether to fire.
+		const selected = eligible;
+		const selectedSavings = savings;
 
 		const projected = view.liveTokens - selectedSavings;
 		this.host?.setStatus(
@@ -158,7 +160,7 @@ export class FoldLadderPolicy implements FoldPolicy {
 
 	private publishIdle(view: PolicyView, fraction: number, foldAt: number, savings: number, stepTokens: number): void {
 		// Between events the ladder is quiet; publish the position so the status command can show
-		// "next fold at N %" without the engine re-deriving policy internals.
+		// "next fold at N %" (of the budget) without the engine re-deriving policy internals.
 		this.host?.setStatus(null, {
 			fold_event: false,
 			usage_fraction: round3(fraction),
