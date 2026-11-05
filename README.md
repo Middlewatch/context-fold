@@ -91,6 +91,10 @@ prompt-cache suffix, so mutations are batched at points where that cost is paid 
   elapsed, fold every eligible block outside the protected tail (floor min(2k, one step)), even
   below the normal usage threshold. `CONTEXTFOLD_CACHE_EXPIRY=off` disables it. Pi's `idle`
   cache warming gates it off; `streaming` warming gates it only inside an active tool loop.
+- A model that declares no `promptCache` (many OpenAI-compatible routes) needs a TTL from its
+  `models.json` entry or `CONTEXTFOLD_CACHE_TTL_MS`. Set it conservatively long: a false expiry
+  rewrites a warm prefix and pays full input on the next request, which costs more than a missed
+  fold. A host's cache lifetime can differ from the model vendor's, so measure before tightening.
 - A fold event masks stale `tool_result`/`thinking` blocks outside the protected tail to their
   deterministic digests, keeping detected risk lines verbatim, and commits them as a *frozen layer*
   whose bytes never change again. The context head stays byte-identical turn over turn, which is
@@ -368,7 +372,7 @@ shadowing when it applies.
 | `CONTEXTFOLD_BUDGET_CAP` | `200000` | …capped at this absolute ceiling (attention degrades at absolute depth). `0`/`off` disables. |
 | `CONTEXTFOLD_TAIL` | `20000` | Protected-tail target: the newest ~N tokens never fold (clamped to half the budget). |
 | `CONTEXTFOLD_CACHE_EXPIRY` | `on` | Fold every eligible block outside the protected tail when the model-declared prompt-cache TTL has elapsed before a request. |
-| `CONTEXTFOLD_CACHE_TTL_MS` | `0` | Fallback TTL when the model declares none; `0`/`auto` uses model metadata. |
+| `CONTEXTFOLD_CACHE_TTL_MS` | `0` | Fallback TTL when the model declares none; `0`/`auto` uses model metadata. Set it long: a short value folds warm caches. |
 | `CONTEXTFOLD_COMPACT` | `det` | Hard-compaction answer: `det` = deterministic seed-index summary; `native` = Pi stock. |
 | `CONTEXTFOLD_FOOTER_FORMAT` | `full` | Footer status line: `full` = count, masked tokens, and the trigger gauge; `compact` = count and warnings only. |
 | `CONTEXTFOLD_RECON_TOKENS` | `18000` | Reconstruction estimate used by the reset flag (input-token equivalents). |
