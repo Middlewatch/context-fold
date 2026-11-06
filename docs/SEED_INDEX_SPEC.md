@@ -42,8 +42,11 @@ replacement spans omit `fullOutputPath` because the original tool file does not 
 One JSONL file per session, append-only: one record per fold event (plus one
 final record at hard compaction), at
 `<sessionDir>/context-fold/<sessionId>/seed-index.jsonl`. Handoff seeds are
-written beside it. Readers must tolerate unknown extra fields and records with
-a higher `v` they do not understand.
+written beside it. When the session dir is inside the workspace (for example
+`--session-dir .`), the root moves to Pi's own default session layout,
+`<agentDir>/sessions/<encoded sessionDir>/context-fold/<sessionId>/`, so a
+normal session never leaves untracked files in the tree. Readers must tolerate
+unknown extra fields and records with a higher `v` they do not understand.
 
 ## Record shape
 

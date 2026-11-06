@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { user, assistantText, assistantWithCalls, bigResult, toolResult } from "./helpers";
 import type { AgentMessage } from "../src/core/block";
+import { resolveArtifactDir } from "../src/adapters/pi/artifacts";
 
 const PI_PRESENT = existsSync(resolve(__dirname, "../node_modules/@earendil-works/pi-coding-agent/package.json"));
 
@@ -81,6 +82,7 @@ afterEach(() => {
 function ctxFor(
 	opts: {
 		sessionId?: string;
+		cwd?: string;
 		entries?: unknown[];
 		/** Message payloads for the session ledger, wrapped as Pi's SessionMessageEntry shape. */
 		messages?: AgentMessage[];
@@ -95,6 +97,7 @@ function ctxFor(
 		statuses,
 		ctx: {
 			model: opts.model ?? { id: "test-model", provider: "test" },
+			...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
 			sessionManager: {
 				getSessionDir: () => dir,
 				getSessionId: () => opts.sessionId ?? "s1",
@@ -197,6 +200,24 @@ describe.skipIf(!PI_PRESENT)("context hook", () => {
 		expect(folded.length).toBeGreaterThan(0);
 		// The input array is Pi's copy; folding must not mutate it in place.
 		expect(JSON.stringify(messages)).not.toContain("FOLDED");
+	});
+
+	it("writes artifacts under the agent dir when the session dir is the workspace", async () => {
+		const agent = mkdtempSync(join(tmpdir(), "cf-agent-"));
+		process.env.PI_CODING_AGENT_DIR = agent;
+		try {
+			const s = await load();
+			const { ctx } = ctxFor({ cwd: dir, usage: { contextWindow: 80_000, tokens: null } });
+
+			await s.hooks.get("context_with_system")!({ messages: heavySession() }, ctx);
+
+			expect(existsSync(join(dir, "context-fold"))).toBe(false);
+			expect(
+				existsSync(join(resolveArtifactDir({ sessionDir: dir, sessionId: "s1", agentDir: agent, cwd: dir }), "seed-index.jsonl")),
+			).toBe(true);
+		} finally {
+			rmSync(agent, { recursive: true, force: true });
+		}
 	});
 
 	it("sends context raw rather than failing the turn when the pass throws", async () => {

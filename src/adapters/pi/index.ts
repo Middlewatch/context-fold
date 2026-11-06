@@ -31,7 +31,8 @@ import { advise } from "./advisor";
 import { CacheWarning, notifyCacheWarning } from "./cache-warning";
 
 import { adapterConfigFromEnv, configFromEnv, debugEnabled, resolveCacheWarming, type SavedSettings } from "./config";
-import { loadSavedSettings, runSettingsMenu, settingsReport } from "./settings";
+import { loadSavedSettings, agentDirPath, runSettingsMenu, settingsReport } from "./settings";
+import { resolveArtifactDir } from "./artifacts";
 
 /**
  * Providers known to hold the conversation in their own child process, so a fold rewrites a copy
@@ -205,13 +206,25 @@ export default function contextFold(pi: ExtensionAPI): void {
 	};
 
 	// The extension's on-disk home: append-only text (seed index, handoff seeds) measured in
-	// kilobytes, retained like Pi's own session files — no GC.
-	const artifactDirFor = (ctx: { sessionManager: { getSessionDir(): string; getSessionId(): string } }): string =>
-		join(ctx.sessionManager.getSessionDir(), "context-fold", ctx.sessionManager.getSessionId());
+	// kilobytes, retained like Pi's own session files — no GC. It sits beside the session files,
+	// except when the session dir is inside the workspace (a host passed `--session-dir .` or a
+	// relative `sessionDir` setting); then it falls back under the agent dir so a normal session
+	// never dirties the tree with untracked artifacts.
+	interface ArtifactCtx {
+		cwd?: string;
+		sessionManager: { getSessionDir(): string; getSessionId(): string };
+	}
+	const artifactDirFor = (ctx: ArtifactCtx): string =>
+		resolveArtifactDir({
+			sessionDir: ctx.sessionManager.getSessionDir(),
+			sessionId: ctx.sessionManager.getSessionId(),
+			agentDir: agentDirPath(),
+			cwd: ctx.cwd,
+		});
 
 	let indexStore: SeedIndexStore | null = null;
 	let indexKey = "";
-	const indexFor = (ctx: { sessionManager: { getSessionDir(): string; getSessionId(): string } }): SeedIndexStore => {
+	const indexFor = (ctx: ArtifactCtx): SeedIndexStore => {
 		const dir = artifactDirFor(ctx);
 		if (!indexStore || indexKey !== dir) {
 			indexStore = new SeedIndexStore(dir);
