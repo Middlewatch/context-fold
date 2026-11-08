@@ -69,11 +69,6 @@ confirmation, to start the replacement session directly. The seed becomes the fi
 message and the new session opens idle, spending nothing until you type. Decline (or run
 headless) and the flow stays write, review, `/new`, paste.
 
-> **On the thresholds.** Every percentage above is a default, not a tuned constant. The right
-> first-fold point trades the initial cache write against how many times you compact over a
-> session, and I have not settled it. All of them are environment variables (see
-> [Configuration](#configuration)) and all of them may move in a future minor release.
-
 ## What it does
 
 ### Discrete fold events
@@ -269,11 +264,6 @@ submits a handoff automatically.
 - **The tool names are global.** The extension registers `recall_folded` and `unfold` as global
   tools. If another extension registers the same names, one will shadow the other (`unfold` is the
   generic one; `recall_folded` was named to avoid this collision).
-- **Primarily exercised against one model family.** Development and testing have mostly used
-  `gpt-5.6-sol` via the openai-codex provider. Folding only reads Pi's usage numbers and message
-  shapes, so other providers should work; fold cost accounting is the one feature with a known
-  provider dependency, since it needs reported cache writes. The figures quoted above come from
-  individual runs rather than a repeatable harness.
 - **Folding changes what the model sees.** A pointer is not the payload. Agents handle this well in
   practice, since the teaching text explains the contract, but if you see an agent confused by a
   `{#code FOLDED}` marker, `CONTEXTFOLD=0` turns everything off for a session.
