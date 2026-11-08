@@ -1,7 +1,7 @@
 # Pi extension API surface
 
 Context-fold requires Pi 0.87.1 or newer. This reference describes the contracts verified against
-0.87.1; the development dependency pins that version. Re-check `docs/extensions.md`,
+0.87.1 and 1.5.0: the unit suite passes on both, and the development dependency pins 1.5.0. Re-check `docs/extensions.md`,
 `docs/compaction.md`, `docs/session-format.md`, and the exported declarations in the installed
 `@earendil-works/pi-coding-agent` when updating it.
 

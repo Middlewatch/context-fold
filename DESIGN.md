@@ -173,11 +173,10 @@ Edited results never inherit the original tool's full-output recall route.
 Automatic compaction re-extracts its evidence from the active branch before the kept boundary,
 applying the branch's latest edits even to previously compacted source entries. It renders only
 that new index record, rather than merging archival records or carrying previous summaries with
-untraceable evidence. Per-block extraction retains recent evidence within the field caps, including within one long
-user turn. Pi owns
-the system/tool checkpoint and the kept boundary, including recovery metadata and retain-none
-compactions. Its threshold check uses canonical context before request-local folding, so the
-fold ladder cannot be assumed to prevent that check.
+untraceable evidence. Per-block extraction retains recent evidence within the field caps,
+including within one long user turn. Pi owns the system/tool checkpoint and the kept boundary,
+including recovery metadata and retain-none compactions. Its threshold check uses canonical
+context before request-local folding, so the fold ladder cannot be assumed to prevent that check.
 
 ## 6. Fold-state persistence
 
@@ -212,8 +211,6 @@ cannot prevent the turn.
 `CONTEXTFOLD=0` disables the extension entirely for one session, which is the escape hatch for
 testing or for isolating a suspected fold-related problem.
 
----
-
 ### Cache-risk input boundary
 
 Cache prediction reads successful assistant completion timestamps from the active session branch,
@@ -227,6 +224,8 @@ and queued streaming input continue unchanged. Cancellation restores the editor 
 structured images for the next interactive prompt in that session. `/context-fold discard-images`
 clears them. The confirmation is disabled by default and never changes fold policy or starts a new
 session.
+
+---
 
 ## 8. Invariants
 

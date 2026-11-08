@@ -29,8 +29,8 @@ Documentation-only and display-only changes are patch releases and say so in the
 
 ## What ships
 
-The `files` allowlist in `package.json` is deliberately narrow: `src/`, `docs/`, `DESIGN.md` and
-`CHANGELOG.md`, plus the `README.md`, `LICENSE` and `package.json` npm always includes. Tests, the
+The `files` allowlist in `package.json` is deliberately narrow: `index.ts`, `src/`, `docs/`,
+`DESIGN.md` and `CHANGELOG.md`, plus the `README.md`, `LICENSE` and `package.json` npm always includes. Tests, the
 live e2e scripts, `tsconfig.json` and `vitest.config.ts` stay out. Pi loads the TypeScript source
 directly through jiti, so there is no build step and no compiled output to ship.
 
@@ -65,16 +65,14 @@ are not part of `npm test`. Run them against a release candidate when the foldin
 changed:
 
 ```bash
-scripts/e2e-ladder.sh   # fold event fires, index emitted, head byte-stable, buried value recalled
-scripts/e2e-resume.sh   # folds survive a session restart
+scripts/e2e-ladder.sh          # fold event fires, index emitted, head byte-stable, buried value recalled
+scripts/e2e-resume.sh          # folds survive a session restart
+scripts/e2e-compact-resume.sh  # folds survive real hard compaction plus a restart
 ```
 
 Override the provider and model with `E2E_PROVIDER` / `E2E_MODEL`. These scripts were written
 against a model with reliable tool use, so a weaker model can fail a check for its own reasons
 rather than the extension's, so read a failure before believing it.
-
-The full ladder, including check (c) and the wire-level check (e), passes against
-`openai-codex/gpt-5.6-sol` (last run 2026-07-30, all five checks green).
 
 One known way (c) can fail spuriously: an earlier run against a local model reported `shared=0`,
 which is the script finding no folded block present in both turns to compare, rather than bytes
