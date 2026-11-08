@@ -15,9 +15,8 @@ portability promise in the docs.
 ## Decision
 
 context-fold supports Pi and no other harness. The `src/core` / `src/adapters/pi` split
-stays, but as a pure/effectful boundary — the core keeps no clock, randomness, or I/O
-because that is what makes deterministic, reversible folding testable — not as a porting
-seam. Harness-agnostic breadth with no Pi-side reader is trimmed to observed usage.
+stays as a pure/effectful boundary rather than a porting seam: the core keeps no clock,
+randomness, or I/O because that is what makes deterministic, reversible folding testable. Harness-agnostic breadth with no Pi-side reader is trimmed to observed usage.
 
 ## Consequences
 
