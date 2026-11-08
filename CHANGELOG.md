@@ -3,6 +3,21 @@ Note: This is largely LLM written, I won't hand write much in here unless I have
 
 Notable changes to context-fold.
 
+## 0.7.1 - 2026-11-08
+
+Documentation-only patch release.
+
+### Changed
+
+- Remove the usefulness-testing status note from the README; the project is maintained.
+- Drop the README's thresholds aside and the model-family limitation, both written about the
+  original evaluation runs rather than the shipped behavior.
+- `docs/pi-api-surface.md` states the verified Pi range: the suite passes on 0.87.1 and 1.5.0,
+  the development dependency pins 1.5.0, and the minimum stays 0.87.1.
+- Working specs under `docs/specs/` no longer ship in the package; `ISSUES.md` is removed.
+- `RELEASING.md` lists all three live scripts and `index.ts` in the files allowlist. `DESIGN.md`
+  rewraps one paragraph and places the cache-risk subsection inside section 7.
+
 ## 0.7.0 - 2026-10-13
 
 Minor bump because fold timing changes for one provider (see RELEASING.md).
