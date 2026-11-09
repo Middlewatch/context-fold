@@ -174,3 +174,23 @@ describe("reset", () => {
 		expect(configured).toMatchObject({ enabled: true, ttlMs: 600_000, tier: "configured" });
 	});
 });
+
+describe("activity after a reset", () => {
+	it("does not seed the clock from a persisted usage entry while the tier is unknown", () => {
+		const clock = fakeClock();
+		const expiry = new CacheExpiryTracker(clock.now);
+		expiry.record({ cacheWrite: 5_000, cacheWrite1h: 5_000 });
+		clock.advance(600_000);
+		const warmedAt = clock.now();
+		clock.advance(600_000);
+
+		// Reload or tree navigation: the 1h tier is forgotten, and the branch still holds a
+		// cache_warm entry older than the short TTL. Judging it against the short tier would
+		// fold a prefix that is still warm.
+		expiry.reset();
+		expiry.noteActivity(warmedAt);
+		const decision = evaluate(expiry, BOTH);
+		expect(decision.expired).toBe(false);
+		expect(decision.reason).toContain("no response observed yet");
+	});
+});

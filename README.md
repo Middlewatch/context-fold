@@ -82,8 +82,8 @@ prompt-cache suffix, so mutations are batched at points where that cost is paid 
   once usage is past the first-fold threshold. `CONTEXTFOLD_CACHE_EXPIRY=on` enables it. Pi's
   `idle` cache warming gates it off; `streaming` warming gates it only inside an active tool
   loop. On Pi before 0.99.0 the warming mode is unknown, so expiry stays off. To make expiry fold
-  earlier, lower `CONTEXTFOLD_FOLD_AT` and `CONTEXTFOLD_FOLD_STEP`; a never-warm session uses
-  `CONTEXTFOLD_COLD_FOLD_AT`.
+  earlier, lower `CONTEXTFOLD_FOLD_AT`, which also moves the warm first fold; a never-warm session
+  uses `CONTEXTFOLD_COLD_FOLD_AT`. The step does not gate an expiry fold.
 - `CONTEXTFOLD_FOLD_MODE=aggressive` sizes the thresholds and step by the fold budget
   (`min(200k, 0.75 × window)`), drops the cold step requirement, and lets expiry fold below the
   usage threshold. It is opt-in; the default is `standard`.

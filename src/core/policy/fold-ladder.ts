@@ -97,7 +97,7 @@ export class FoldLadderPolicy implements FoldPolicy {
 		let savings = 0;
 		for (const b of eligible) savings += b.tokens - b.foldedTokens;
 
-		const stepTokens = unit > 0 ? Math.floor(this.cfg.foldStep * unit) : 0;
+		const stepTokens = unit > 0 ? Math.floor(this.cfg.foldStep * unit) : Math.floor(this.cfg.foldStep * view.budget);
 		// A warm fold must buy a full step: it invalidates the cached suffix. The floor shrinks
 		// with the step on tiny windows instead of swallowing it.
 		const minFoldTokens = Math.max(1, Math.min(2_000, stepTokens));
@@ -138,10 +138,11 @@ export class FoldLadderPolicy implements FoldPolicy {
 		}
 
 		let trigger: "cap" | "threshold" | "expiry";
-		if (overCap) {
-			trigger = "cap";
-		} else if (thresholdHit) {
+		// A fold past both the threshold and the cap is recorded as a threshold fold, as it always was.
+		if (thresholdHit) {
 			trigger = "threshold";
+		} else if (overCap) {
+			trigger = "cap";
 		} else {
 			trigger = "expiry";
 		}

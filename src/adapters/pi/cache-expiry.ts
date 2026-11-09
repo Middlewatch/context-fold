@@ -53,10 +53,14 @@ export class CacheExpiryTracker {
 		this.writeTier = null;
 	}
 
-	/** Cache-warming refreshes move the expiry clock too. */
+	/**
+	 * Cache-warming refreshes move the expiry clock too. They never start it: after a reset the
+	 * write tier is unknown, and a persisted entry judged against the short tier could call a
+	 * long-tier prefix expired while it is still warm.
+	 */
 	noteActivity(at: number): void {
 		if (!Number.isFinite(at) || at <= 0) return;
-		if (this.lastResponseAt === null || at > this.lastResponseAt) this.lastResponseAt = at;
+		if (this.lastResponseAt !== null && at > this.lastResponseAt) this.lastResponseAt = at;
 	}
 
 	evaluate(input: CacheExpiryInput): CacheExpiryDecision {

@@ -359,7 +359,9 @@ export default function contextFold(pi: ExtensionAPI): void {
 			lastContextWindow = ctx.getContextUsage()?.contextWindow ?? lastContextWindow;
 			const t = telemetry.snapshot();
 			const noCacheEver = t.turns >= 3 && t.totals.cacheRead === 0;
-			const usageEntry = [...ctx.sessionManager.getBranch()].reverse().find((e) => e.type === "usage"); // includes cache_warm
+			const usageEntry = acfg.cacheExpiry === "off"
+				? undefined
+				: [...ctx.sessionManager.getBranch()].reverse().find((e) => e.type === "usage"); // includes cache_warm
 			if (usageEntry) cacheExpiry.noteActivity(typeof usageEntry.timestamp === "number" ? usageEntry.timestamp : Date.parse(String(usageEntry.timestamp)));
 			const last = event.messages.at(-1);
 			// A user tail after a tool result is steering, not a settled turn.
