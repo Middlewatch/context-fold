@@ -57,8 +57,8 @@ describe("fold under budget", () => {
 		const messages = bigSession(5);
 		expect(liveTokensOf(messages)).toBeLessThan(CAP);
 
-		// The provider-anchored count, not the chars÷4 estimator, decides: 7,900 of an 8,000 window
-		// is 99 % usage, far past the ladder's 45 % first-fold threshold.
+		// The provider-anchored count, not the chars÷4 estimator, decides: 7,900 of the 8,000
+		// window is 99 % usage, past the ladder's 45 % first-fold threshold.
 		const out = engine.process(messages, { contextWindow: CW, tokens: 7_900 });
 
 		expect(out).not.toBe(messages);

@@ -9,7 +9,7 @@
  * Skipped when the Pi CLI is not installed alongside (the adapter imports `typebox`, which Pi
  * injects at runtime — see vitest.config.ts).
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -25,7 +25,7 @@ interface Entry {
 }
 
 /** A stub ExtensionAPI that keeps every registration so the test can invoke it. */
-function stubPi() {
+function stubPi(settings: { cacheWarming?: "off" | "streaming" | "idle" } = {}) {
 	const hooks = new Map<string, Hook>();
 	const tools = new Map<string, { execute(id: string, p: Record<string, unknown>): Promise<{ content: { text: string }[] }> }>();
 	const commands = new Map<string, { handler(args: unknown, ctx: unknown): Promise<void> }>();
@@ -40,6 +40,9 @@ function stubPi() {
 			registerTool: (t: never) => tools.set((t as { name: string }).name, t),
 			registerCommand: (name: string, c: never) => commands.set(name, c),
 			appendEntry: (customType: string, data?: unknown) => entries.push({ customType, data }),
+			// Pi's real default is "streaming". Streaming warms only during active runs, so a
+			// user-idle expiry still folds; "idle" warming is the mode that gates expiry off.
+			getSettings: () => ({ cacheWarming: settings.cacheWarming ?? "streaming" }),
 			setLabel: () => {},
 		} as never,
 	};
@@ -51,8 +54,11 @@ const ENV_KEYS = [
 	"CONTEXTFOLD",
 	"CONTEXTFOLD_COMPACT",
 	"CONTEXTFOLD_FOLD_AT",
+	"CONTEXTFOLD_FOLD_MODE",
 	"CONTEXTFOLD_FOOTER_FORMAT",
 	"CONTEXTFOLD_TAIL",
+	"CONTEXTFOLD_CACHE_EXPIRY",
+	"CONTEXTFOLD_CACHE_TTL_MS",
 	"CONTEXTFOLD_L0",
 	"CONTEXTFOLD_L0_THRESHOLD",
 	"PI_CODING_AGENT_DIR",
@@ -63,6 +69,7 @@ beforeEach(() => {
 	for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
 });
 afterEach(() => {
+	vi.useRealTimers();
 	rmSync(dir, { recursive: true, force: true });
 	for (const k of ENV_KEYS) {
 		if (savedEnv[k] === undefined) delete process.env[k];
@@ -78,6 +85,7 @@ function ctxFor(
 		/** Message payloads for the session ledger, wrapped as Pi's SessionMessageEntry shape. */
 		messages?: AgentMessage[];
 		usage?: { contextWindow: number; tokens: number | null } | null;
+		model?: { id: string; provider: string; promptCache?: { short?: number; long?: number } };
 	} = {},
 ) {
 	const notices: string[] = [];
@@ -86,7 +94,7 @@ function ctxFor(
 		notices,
 		statuses,
 		ctx: {
-			model: { id: "test-model", provider: "test" },
+			model: opts.model ?? { id: "test-model", provider: "test" },
 			sessionManager: {
 				getSessionDir: () => dir,
 				getSessionId: () => opts.sessionId ?? "s1",
@@ -104,9 +112,9 @@ function ctxFor(
 	};
 }
 
-async function load() {
+async function load(settings: { cacheWarming?: "off" | "streaming" | "idle" } = {}) {
 	const { default: contextFold } = await import("../src/adapters/pi/index");
-	const s = stubPi();
+	const s = stubPi(settings);
 	contextFold(s.api);
 	return s;
 }
@@ -119,6 +127,41 @@ function heavySession(): AgentMessage[] {
 		messages.push(bigResult(`c${i}`, 400));
 	}
 	messages.push(user("now the newest question"));
+	return messages;
+}
+
+/** Past the standard threshold, but the only observation is below one ladder step. */
+function expiryBelowStepSession(): AgentMessage[] {
+	return [
+		user("brief: " + "requirements ".repeat(15_000)),
+		assistantWithCalls([{ id: "e0", name: "read" }]),
+		bigResult("e0", 300),
+		assistantText("done"),
+		user("go"),
+	];
+}
+
+/** ~40k live tokens: past the aggressive cold threshold, under the standard warm one. */
+function expirySession(): AgentMessage[] {
+	const messages: AgentMessage[] = [user("build the thing")];
+	for (let i = 0; i < 8; i++) {
+		messages.push(assistantWithCalls([{ id: `e${i}`, name: "read" }]));
+		messages.push(bigResult(`e${i}`, 400));
+	}
+	messages.push(assistantText("done"));
+	messages.push(user("now the newest question"));
+	return messages;
+}
+
+/** Same size, but a tool loop is still in progress (last message is a tool result). */
+function expirySessionActive(): AgentMessage[] {
+	const messages: AgentMessage[] = [user("build the thing")];
+	for (let i = 0; i < 8; i++) {
+		messages.push(assistantWithCalls([{ id: `e${i}`, name: "read" }]));
+		messages.push(bigResult(`e${i}`, 400));
+	}
+	messages.push(assistantWithCalls([{ id: "last", name: "read" }]));
+	messages.push(bigResult("last", 400));
 	return messages;
 }
 
@@ -192,6 +235,184 @@ describe.skipIf(!PI_PRESENT)("context hook", () => {
 			process.stderr.write = originalWrite;
 		}
 		expect(writes.join("")).toContain("seed-index emission failed (fold skipped)");
+	});
+});
+
+describe.skipIf(!PI_PRESENT)("cache-expiry-aware folding", () => {
+	beforeEach(() => {
+		process.env.CONTEXTFOLD_FOLD_MODE = "aggressive";
+		process.env.CONTEXTFOLD_CACHE_EXPIRY = "on";
+	});
+
+	const BASE = 1_000_000_000_000;
+	const usage = (u: Record<string, number>) => ({ message: { role: "assistant", usage: { output: 10, ...u } } });
+	const foldCount = (out: { messages: AgentMessage[] }) => (JSON.stringify(out.messages).match(/FOLDED/g) ?? []).length;
+
+	it("uses the model's short TTL: warm before expiry, cold after", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		const s = await load({ cacheWarming: "off" });
+		const { ctx } = ctxFor({
+			model: { id: "cached", provider: "test", promptCache: { short: 300 } },
+			usage: { contextWindow: 200_000, tokens: null },
+		});
+		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
+
+		// Under the warm 45 % threshold, over the aggressive cold 25 % one.
+		vi.setSystemTime(BASE + 299_999);
+		const warm = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(warm)).toBe(0);
+
+		vi.setSystemTime(BASE + 300_001);
+		const cold = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(cold)).toBeGreaterThan(0);
+	});
+
+	it("a 1h cache write selects the long TTL over the short one", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		const s = await load({ cacheWarming: "off" });
+		const { ctx } = ctxFor({
+			model: { id: "cached", provider: "test", promptCache: { short: 60, long: 3600 } },
+			usage: { contextWindow: 200_000, tokens: null },
+		});
+		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 0, cacheWrite: 5_000, cacheWrite1h: 5_000 }), ctx);
+
+		// Well past the short tier, still inside the long one.
+		vi.setSystemTime(BASE + 120_000);
+		const long = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(long)).toBe(0);
+
+		vi.setSystemTime(BASE + 3_600_001);
+		const expired = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(expired)).toBeGreaterThan(0);
+	});
+
+	it("no cache counters and no model TTL: expiry folding stays off", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		const s = await load({ cacheWarming: "off" });
+		const { ctx } = ctxFor({ usage: { contextWindow: 200_000, tokens: null } });
+		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 0, cacheWrite: 0 }), ctx);
+
+		vi.setSystemTime(BASE + 3_600_001);
+		const out = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(out)).toBe(0);
+	});
+
+	it("streaming warming does not gate expiry at a user boundary", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		const s = await load({ cacheWarming: "streaming" });
+		const { ctx } = ctxFor({
+			model: { id: "cached", provider: "test", promptCache: { short: 60 } },
+			usage: { contextWindow: 200_000, tokens: null },
+		});
+		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
+
+		vi.setSystemTime(BASE + 120_000);
+		const out = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(out)).toBeGreaterThan(0);
+	});
+
+	it("streaming warming gates expiry inside an active tool loop", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		const s = await load({ cacheWarming: "streaming" });
+		const { ctx } = ctxFor({
+			model: { id: "cached", provider: "test", promptCache: { short: 60 } },
+			// Below the aggressive warm fold, so only expiry could fire.
+			usage: { contextWindow: 200_000, tokens: null },
+		});
+		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
+
+		vi.setSystemTime(BASE + 120_000);
+		const out = (await s.hooks.get("context_with_system")!({ messages: expirySessionActive() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(out)).toBe(0);
+	});
+
+	it("idle cache warming gates expiry folding", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		const s = await load({ cacheWarming: "idle" });
+		const { ctx } = ctxFor({
+			model: { id: "cached", provider: "test", promptCache: { short: 60 } },
+			usage: { contextWindow: 200_000, tokens: null },
+		});
+		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
+
+		vi.setSystemTime(BASE + 120_000);
+		const out = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(out)).toBe(0);
+	});
+
+	it("keeps the existing no-cache cold branch: three turns without a cache read", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		const s = await load({ cacheWarming: "off" });
+		const { ctx } = ctxFor({ usage: { contextWindow: 200_000, tokens: null } });
+		for (let i = 0; i < 3; i++) {
+			await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 0, cacheWrite: 0 }), ctx);
+		}
+
+		const out = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(out)).toBeGreaterThan(0);
+	});
+
+	it("standard mode leaves expiry folding off by default", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		delete process.env.CONTEXTFOLD_FOLD_MODE;
+		delete process.env.CONTEXTFOLD_CACHE_EXPIRY;
+		process.env.CONTEXTFOLD_TAIL = "0";
+		const s = await load({ cacheWarming: "off" });
+		const { ctx } = ctxFor({
+			model: { id: "cached", provider: "test", promptCache: { short: 60 } },
+			usage: { contextWindow: 100_000, tokens: null },
+		});
+		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
+
+		vi.setSystemTime(BASE + 120_000);
+		const out = (await s.hooks.get("context_with_system")!({ messages: expiryBelowStepSession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(out)).toBe(0);
+	});
+
+	it("standard mode folds on expiry past the usage threshold", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		process.env.CONTEXTFOLD_FOLD_MODE = "standard";
+		process.env.CONTEXTFOLD_TAIL = "0";
+		const s = await load({ cacheWarming: "off" });
+		const { ctx } = ctxFor({
+			model: { id: "cached", provider: "test", promptCache: { short: 60 } },
+			usage: { contextWindow: 100_000, tokens: null },
+		});
+		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
+
+		vi.setSystemTime(BASE + 120_000);
+		const out = (await s.hooks.get("context_with_system")!({ messages: expiryBelowStepSession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(out)).toBeGreaterThan(0);
+	});
+
+	it("a model change resets the learned expiry timestamp", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(BASE);
+		const s = await load({ cacheWarming: "off" });
+		const { ctx } = ctxFor({
+			model: { id: "cached2", provider: "test", promptCache: { short: 60 } },
+			usage: { contextWindow: 200_000, tokens: null },
+		});
+		await s.hooks.get("message_end")!(usage({ input: 1_000, cacheRead: 20_000, cacheWrite: 5_000 }), ctx);
+
+		// The old observation would expire after 60s; the new model must start unknown instead.
+		await s.hooks.get("model_select")!(
+			{ source: "user", previousModel: { id: "cached", provider: "test" }, model: { id: "cached2", provider: "test" } },
+			ctx,
+		);
+
+		vi.setSystemTime(BASE + 120_000);
+		const out = (await s.hooks.get("context_with_system")!({ messages: expirySession() }, ctx)) as { messages: AgentMessage[] };
+		expect(foldCount(out)).toBe(0);
 	});
 });
 
@@ -607,7 +828,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 			user("now the newest question"),
 		];
 
-		// 40k/80k = 50% ≥ the 45% threshold, but only ~2.5k of maskable mass (< the 9.6k step):
+		// 40k/60k = 67% ≥ the 45% threshold, but only ~2.5k of maskable mass (< the 7.2k step):
 		// no fold fires, and the gauge shows progress toward the step instead of the usage threshold.
 		await s.hooks.get("context_with_system")!({ messages }, ctx);
 		expect(statuses["context-fold"]).toMatch(/next fold \S+\/\S+/);
@@ -619,7 +840,7 @@ describe.skipIf(!PI_PRESENT)("footer status line", () => {
 		const { ctx, statuses } = ctxFor({ usage: { contextWindow: 80_000, tokens: 40_000 } });
 
 		// Pure conversation: no tool results or thinking anywhere, so the ladder has nothing to work
-		// with even though usage (50%) is past the 45% threshold. Still interim — a big tool result
+		// with even though usage (67% of the 60k budget) is past the 45% threshold. Still interim — a big tool result
 		// next turn would start filling the gauge — so it counts from zero rather than declaring
 		// folding impossible.
 		await s.hooks.get("context_with_system")!({ messages: [user("hi"), assistantText("a long answer"), user("more")] }, ctx);

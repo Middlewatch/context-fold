@@ -42,10 +42,9 @@ why every fold emits a deterministic index of exact tokens rather than a paraphr
 
 ## The system in short
 
-**1. Per-turn: the fold ladder.** Once usage crosses ~45 % of the context window, a
-fold event masks stale `tool_result` and `thinking` blocks. User intent, assistant conclusions, and
-the record of every action are never touched. Fresh tool results are always delivered in full at
-least once.
+**1. Per-turn: the fold ladder.** Once usage crosses ~45 % of the context window, a fold event
+masks stale `tool_result` and `thinking` blocks. User intent, assistant conclusions, and the record
+of every action are never touched. Fresh tool results are always delivered in full at least once.
 
 **2. The floor.** Eventually no more tool calls can be masked. At that point context-fold says so
 rather than churning. What remains is the irreducible floor, and it cannot compress past it.
@@ -78,12 +77,26 @@ prompt-cache suffix, so mutations are batched at points where that cost is paid 
 
 - First fold when usage crosses ~45 % of the context window (25 % when telemetry shows the session
   has never had a live cache read, since there is no warm prefix worth protecting).
+- Cache expiry is an opt-in separate trigger: before a request, if the model-declared prompt-cache
+  TTL has elapsed, fold every eligible block outside the protected tail (floor min(2k, one step))
+  once usage is past the first-fold threshold. `CONTEXTFOLD_CACHE_EXPIRY=on` enables it. Pi's
+  `idle` cache warming gates it off; `streaming` warming gates it only inside an active tool
+  loop. On Pi before 0.99.0 the warming mode is unknown, so expiry stays off. To make expiry fold
+  earlier, lower `CONTEXTFOLD_FOLD_AT` and `CONTEXTFOLD_FOLD_STEP`; a never-warm session uses
+  `CONTEXTFOLD_COLD_FOLD_AT`.
+- `CONTEXTFOLD_FOLD_MODE=aggressive` sizes the thresholds and step by the fold budget
+  (`min(200k, 0.75 × window)`), drops the cold step requirement, and lets expiry fold below the
+  usage threshold. It is opt-in; the default is `standard`.
+- A model that declares no `promptCache` (many OpenAI-compatible routes) needs a TTL from its
+  `models.json` entry or `CONTEXTFOLD_CACHE_TTL_MS`. Set it conservatively long: a false expiry
+  rewrites a warm prefix and pays full input on the next request, which costs more than a missed
+  fold. A host's cache lifetime can differ from the model vendor's, so measure before tightening.
 - A fold event masks stale `tool_result`/`thinking` blocks outside the protected tail to their
   deterministic digests, keeping detected risk lines verbatim, and commits them as a *frozen layer*
   whose bytes never change again. The context head stays byte-identical turn over turn, which is
   what keeps prefix caches warm.
-- Each further event needs at least a ladder step (~12 % of the window) of maskable mass. Crossing
-  the absolute budget cap (`min(200k, 0.75 × window)`) folds immediately.
+- Every warm fold event, including the first, needs at least a ladder step (~12 % of the window)
+  of maskable mass. Crossing the absolute budget cap folds immediately.
 
 ### What folds and what doesn't
 
@@ -180,8 +193,9 @@ append-only session file even once the raw message has left live context.
   The clock starts at the last successful response for the selected provider and model, restored
   from the active session branch. Typing, tool activity, and failed responses do not refresh it.
   Each idle interval gets one notice. A model with no recorded activity instead says
-  `cache unverified`. The token count is an estimate, including after compaction; elapsed time
-  does not prove cache expiry or guarantee that the provider will bill the whole context again.
+  `cache unverified`. The token count is an estimate, including after compaction; this warning is
+  advisory. The expiry *fold* trigger uses the model's `promptCache` TTL (or the configured
+  override), runs only before a request, and never claims that elapsed time alone proves expiry.
   Hosts that cannot estimate the retained context skip prediction while its size is unknown.
 - **Observed cold input**: after the agent settles, a final response with zero cached reads and
   at least 20k input tokens can trigger
@@ -341,12 +355,15 @@ shadowing when it applies.
 | Var | Default | Meaning |
 |---|---|---|
 | `CONTEXTFOLD` | _(on)_ | Master kill switch: `0`/`off` = the extension registers nothing this session. |
-| `CONTEXTFOLD_FOLD_AT` | `0.45` | First fold when usage ≥ this fraction of the context window. |
-| `CONTEXTFOLD_FOLD_STEP` | `0.12` | A fold event must save at least this fraction of the window (spaces events). |
+| `CONTEXTFOLD_FOLD_MODE` | `standard` | `standard` sizes by the context window; `aggressive` sizes by the fold budget, drops the cold step, and folds on expiry below the fold threshold. |
+| `CONTEXTFOLD_FOLD_AT` | `0.45` | First fold when usage ≥ this fraction of the context window (or the fold budget in aggressive mode). |
+| `CONTEXTFOLD_FOLD_STEP` | `0.12` | A warm fold event must save at least this fraction of the window (or the budget in aggressive mode; spaces events). |
 | `CONTEXTFOLD_COLD_FOLD_AT` | `0.25` | First-fold threshold when no live cache read has ever been observed. |
 | `CONTEXTFOLD_BUDGET_FRACTION` | `0.75` | Budget = this fraction of the context window… |
 | `CONTEXTFOLD_BUDGET_CAP` | `200000` | …capped at this absolute ceiling (attention degrades at absolute depth). `0`/`off` disables. |
 | `CONTEXTFOLD_TAIL` | `20000` | Protected-tail target: the newest ~N tokens never fold (clamped to half the budget). |
+| `CONTEXTFOLD_CACHE_EXPIRY` | `off` | Fold eligible blocks outside the protected tail when the model-declared prompt-cache TTL has elapsed before a request. |
+| `CONTEXTFOLD_CACHE_TTL_MS` | `0` | Fallback TTL when the model declares none; `0`/`auto` uses model metadata. Set it long: a short value folds warm caches. |
 | `CONTEXTFOLD_COMPACT` | `det` | Hard-compaction answer: `det` = deterministic seed-index summary; `native` = Pi stock. |
 | `CONTEXTFOLD_FOOTER_FORMAT` | `full` | Footer status line: `full` = count, masked tokens, and the trigger gauge; `compact` = count and warnings only. |
 | `CONTEXTFOLD_RECON_TOKENS` | `18000` | Reconstruction estimate used by the reset flag (input-token equivalents). |

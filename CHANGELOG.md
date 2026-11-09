@@ -3,6 +3,22 @@ Note: This is largely LLM written, I won't hand write much in here unless I have
 
 Notable changes to context-fold.
 
+## Unreleased
+
+### Added
+
+- Opt-in cache-expiry folding: before a request, if the model-declared prompt-cache TTL has
+  elapsed, fold eligible blocks outside the protected tail. The TTL comes from the model's
+  `promptCache` tier (`cacheWrite1h` selects long) or `CONTEXTFOLD_CACHE_TTL_MS`.
+  `CONTEXTFOLD_CACHE_EXPIRY` defaults to `off`. `idle` cache warming gates it off and
+  `streaming` warming gates it only inside an active tool loop.
+- Opt-in `CONTEXTFOLD_FOLD_MODE=aggressive`. It sizes thresholds and the step by the fold budget
+  (`min(200k, 0.75 × window)`) instead of the raw window, drops the step requirement for a cold
+  prefix, and folds on expiry below the usage threshold. The default remains `standard`.
+- Read Pi's `cacheWarming` setting through the extension settings accessor (available from Pi
+  0.99.0). The peer minimum stays Pi 0.87.1; when the accessor is absent, warming is unknown and
+  expiry folding stays off.
+
 ## 0.7.1 - 2026-11-08
 
 Documentation-only patch release.

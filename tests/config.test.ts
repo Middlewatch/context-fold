@@ -10,6 +10,7 @@ import {
 	parseSavedSettings,
 	configFromEnv,
 	adapterConfigFromEnv,
+	resolveCacheWarming,
 	type SavedSettings,
 } from "../src/adapters/pi/config";
 
@@ -81,6 +82,28 @@ describe("knob parsers", () => {
 		expect(knob("reconTokens").parse("0")).toBeUndefined();
 	});
 
+	it("cache TTL override accepts auto/0 and a millisecond value", () => {
+		expect(knob("cacheTtlMs").parse("auto")).toBe(0);
+		expect(knob("cacheTtlMs").parse("0")).toBe(0);
+		expect(knob("cacheTtlMs").parse("300000")).toBe(300_000);
+		expect(knob("cacheTtlMs").parse("-1")).toBeUndefined();
+	});
+
+	it("cache-expiry folding is an explicit on/off knob", () => {
+		setEnv("CONTEXTFOLD_CACHE_EXPIRY", undefined);
+		expect(resolveKnob(knob("cacheExpiry"))).toEqual({ value: "off", source: "default" });
+		expect(knob("cacheExpiry").parse("off")).toBe("off");
+		expect(knob("cacheExpiry").parse("on")).toBe("on");
+		expect(knob("cacheExpiry").parse("maybe")).toBeUndefined();
+	});
+
+	it("fold mode is standard by default and accepts aggressive", () => {
+		setEnv("CONTEXTFOLD_FOLD_MODE", undefined);
+		expect(resolveKnob(knob("foldMode"))).toEqual({ value: "standard", source: "default" });
+		expect(knob("foldMode").parse("aggressive")).toBe("aggressive");
+		expect(knob("foldMode").parse("turbo")).toBeUndefined();
+	});
+
 	it("the removed spool-retention knob is gone from the table", () => {
 		expect(KNOBS.some((s) => s.env === "CONTEXTFOLD_SPOOL_RETAIN_DAYS")).toBe(false);
 	});
@@ -109,8 +132,11 @@ describe("saved settings flow into the config builders", () => {
 		budgetFraction: 0.5,
 		budgetCap: 100_000,
 		tail: 10_000,
+		foldMode: "aggressive",
 		foldAt: 0.35,
 		reconTokens: 9_000,
+		cacheExpiry: "off",
+		cacheTtlMs: 600_000,
 		compact: "native",
 		footerFormat: "compact",
 	};
@@ -133,11 +159,14 @@ describe("saved settings flow into the config builders", () => {
 	it("adapterConfigFromEnv picks up saved ladder, compact, and recon values", () => {
 		for (const name of TOUCHED) setEnv(name, undefined);
 		const acfg = adapterConfigFromEnv(savedCfg);
+		expect(acfg.ladder.mode).toBe("aggressive");
 		expect(acfg.ladder.foldAt).toBe(0.35);
 		expect(acfg.ladder.foldStep).toBe(0.12);
 		expect(acfg.compact).toBe("native");
 		expect(acfg.reconTokens).toBe(9_000);
 		expect(acfg.footerFormat).toBe("compact");
+		expect(acfg.cacheExpiry).toBe("off");
+		expect(acfg.cacheTtlMs).toBe(600_000);
 		expect(knob("footerFormat").parse("Full")).toBe("full");
 		expect(knob("footerFormat").parse("wide")).toBeUndefined();
 	});
@@ -166,5 +195,13 @@ describe("cache warning settings", () => {
 		expect(knob("cacheIdleMinutes").parse(" ")).toBeUndefined();
 		expect(knob("confirmColdPrompt").parse("on")).toBe("on");
 		expect(knob("confirmColdPrompt").parse("maybe")).toBeUndefined();
+	});
+
+	it("reads Pi's cache-warming setting", () => {
+		expect(resolveCacheWarming({ getSettings: () => ({ cacheWarming: "off" }) })).toBe("off");
+		expect(resolveCacheWarming({ getSettings: () => ({ cacheWarming: "streaming" }) })).toBe("streaming");
+		expect(resolveCacheWarming({ getSettings: () => ({ cacheWarming: "idle" }) })).toBe("idle");
+		expect(resolveCacheWarming({})).toBeNull();
+		expect(resolveCacheWarming({ getSettings: () => ({ cacheWarming: "turbo" }) })).toBeNull();
 	});
 });

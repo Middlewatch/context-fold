@@ -89,6 +89,9 @@ request-local folding design.
 |---|---|
 | Pressure | `ctx.getContextUsage()` supplies `contextWindow` and nullable `tokens` |
 | Measured cache usage | Assistant `message.usage` on `message_end` |
+| Prompt-cache TTL | `ctx.model.promptCache.short` / `.long` |
+| Cache-warming mode | `pi.getSettings().cacheWarming` (Pi ≥ 0.99.0; unknown disables expiry) |
+| Cache-warm activity | `sessionManager.getBranch()` usage entries |
 | Final idle boundary | `agent_settled`, after recovery and queued work |
 | Resume and navigation cache advisories | `session_start`, `session_tree`, `model_select`, `session_compact` |
 | Optional send confirmation | Interactive `input`, `ctx.ui.select`, and `handled` or `transform` results |
@@ -98,6 +101,9 @@ request-local folding design.
 | Fold state persistence | `pi.appendEntry` with custom type `contextfold.fold` |
 | Session artifacts | `getSessionDir`, `getSessionId`, `getSessionFile` |
 | Handoff replacement session | Command-context `newSession({ parentSession, setup, withSession })` |
+
+The active-run gate for `streaming` cache warming is inferred from the transcript tail, not from a
+Pi contract. It only narrows when expiry folding is allowed; it does not control folding itself.
 
 Successful session replacement invalidates the old command context. Handoff captures plain data
 first and uses `withSession` for its success notification. A new session does not inherit recall
