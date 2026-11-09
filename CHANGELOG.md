@@ -3,12 +3,17 @@ Note: This is largely LLM written, I won't hand write much in here unless I have
 
 Notable changes to context-fold.
 
-## Unreleased
+## 0.8.0 - 2026-11-09
+
+Minor bump because the seed-index `trigger` field gains a value (see RELEASING.md). Fold timing is
+unchanged unless one of the new knobs is turned on. The cache-expiry trigger and the aggressive
+mode were contributed by @gytis-ivaskevicius (#2).
 
 ### Added
 
 - Opt-in cache-expiry folding: before a request, if the model-declared prompt-cache TTL has
-  elapsed, fold eligible blocks outside the protected tail. The TTL comes from the model's
+  elapsed and usage is past the first-fold threshold, fold eligible blocks outside the protected
+  tail without waiting for a full ladder step. The TTL comes from the model's
   `promptCache` tier (`cacheWrite1h` selects long) or `CONTEXTFOLD_CACHE_TTL_MS`.
   `CONTEXTFOLD_CACHE_EXPIRY` defaults to `off`. `idle` cache warming gates it off and
   `streaming` warming gates it only inside an active tool loop.
@@ -18,6 +23,8 @@ Notable changes to context-fold.
 - Read Pi's `cacheWarming` setting through the extension settings accessor (available from Pi
   0.99.0). The peer minimum stays Pi 0.87.1; when the accessor is absent, warming is unknown and
   expiry folding stays off.
+- Seed-index records and the fold ledger carry `trigger: "expiry"` for these folds, and
+  `/context-fold` status reports the expiry state and tier.
 
 ## 0.7.1 - 2026-11-08
 
