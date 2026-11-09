@@ -55,7 +55,7 @@ a higher `v` they do not understand.
   "session": "<session id>",
   "seq": 3,
   "at": "2026-07-28T21:14:03.000Z",
-  "trigger": "threshold | cap | compact",
+  "trigger": "threshold | cap | expiry | compact",
   "usage": { "tokens": 91000, "contextWindow": 200000, "fraction": 0.455 },
 
   "files": ["src/adapters/pi/store.ts", "tests/ladder.test.ts"],
@@ -89,7 +89,9 @@ Field semantics:
   voids the `fold-index` records with that seq appended before it (a compaction
   that failed after its record was emitted); a record appended after the
   retraction may reuse the seq and stands on its own.
-- `trigger`: why this fold fired. A `compact` record re-extracts all compacted history on the
+- `trigger`: why this fold fired. `expiry` means the provider prompt-cache TTL elapsed before the
+  request; standard mode still requires the first-fold threshold, while aggressive mode does not.
+  A `compact` record re-extracts all compacted history on the
   active branch, including earlier compacted spans, with current replacements and omissions
   applied. Its capped fields favor recent blocks, even within one user turn. Prior records remain archival.
 - `files`: every path the folded span touched: tool inputs (read/edit/write

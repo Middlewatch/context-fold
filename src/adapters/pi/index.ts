@@ -626,7 +626,9 @@ export default function contextFold(pi: ExtensionAPI): void {
 			const expiryLine = !expiry.enabled
 				? `cache expiry: off (${expiry.reason})`
 				: expiry.expired
-					? `cache expiry: expired — one-step fold at next request (${expiry.tier ?? "configured"} ttl ${Math.round((expiry.ttlMs ?? 0) / 1000)}s)`
+					? acfg.ladder.mode === "aggressive"
+						? `cache expiry: expired — eligible blocks fold at next request (${expiry.tier ?? "configured"} ttl ${Math.round((expiry.ttlMs ?? 0) / 1000)}s)`
+						: `cache expiry: expired — folds at next request once usage passes the fold threshold (${expiry.tier ?? "configured"} ttl ${Math.round((expiry.ttlMs ?? 0) / 1000)}s)`
 					: expiry.reason === "no response observed yet"
 						? "cache expiry: unverified (no response observed yet)"
 						: `cache expiry: warm (${expiry.tier ?? "configured"} ttl ${Math.round((expiry.ttlMs ?? 0) / 1000)}s)`;

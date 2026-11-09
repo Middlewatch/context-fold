@@ -57,14 +57,14 @@ describe("fold under budget", () => {
 		const messages = bigSession(5);
 		expect(liveTokensOf(messages)).toBeLessThan(CAP);
 
-		// The provider-anchored count, not the chars÷4 estimator, decides: 7,900 of the 6,000
-		// budget is 132 % usage, past the ladder's 45 % first-fold threshold.
+		// The provider-anchored count, not the chars÷4 estimator, decides: 7,900 of the 8,000
+		// window is 99 % usage, past the ladder's 45 % first-fold threshold.
 		const out = engine.process(messages, { contextWindow: CW, tokens: 7_900 });
 
 		expect(out).not.toBe(messages);
 		expect(JSON.stringify(out)).toContain("FOLDED");
 		expect(engine.status?.metrics?.fold_event).toBe(true);
-		expect(engine.status?.metrics?.usage_fraction).toBeCloseTo(7_900 / CAP, 2);
+		expect(engine.status?.metrics?.usage_fraction).toBeCloseTo(7_900 / CW, 2);
 		// The fold consumes every eligible block, and the trigger gauge reads these fields on the
 		// fold turn too: nothing maskable remains until new observations land.
 		expect(engine.status?.metrics?.maskable_tokens).toBe(0);

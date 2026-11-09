@@ -23,7 +23,7 @@ function evaluate(
 	model: CacheModelMeta | undefined,
 	extra: {
 		ttlOverrideMs?: number;
-		cacheWarming?: "off" | "streaming" | "idle";
+		cacheWarming?: "off" | "streaming" | "idle" | null;
 		activeRun?: boolean;
 		enabled?: boolean;
 	} = {},
@@ -129,6 +129,17 @@ describe("cache warming gate", () => {
 		const idle = evaluate(expiry, SHORT, { cacheWarming: "idle" });
 		expect(idle).toMatchObject({ enabled: false, expired: false, ttlMs: null });
 		expect(idle.reason).toContain("cache warming");
+	});
+
+	it("unknown warming disables expiry folding", () => {
+		const clock = fakeClock();
+		const expiry = new CacheExpiryTracker(clock.now);
+		expiry.record({ cacheWrite: 5_000 });
+		clock.advance(10_000_000);
+
+		const decision = evaluate(expiry, SHORT, { cacheWarming: null });
+		expect(decision).toMatchObject({ enabled: false, expired: false, ttlMs: null });
+		expect(decision.reason).toContain("unknown");
 	});
 });
 

@@ -7,7 +7,7 @@
  * /context-fold config menu cannot drift apart. Precedence per knob: default < saved file < env.
  */
 import type { FoldConfig } from "./store";
-import { LADDER_DEFAULTS, type LadderConfig } from "../../core/policy/fold-ladder";
+import { LADDER_DEFAULTS, type FoldMode, type LadderConfig } from "../../core/policy/fold-ladder";
 import type { CacheWarmingMode } from "./cache-expiry";
 
 /** How the extension answers Pi's hard compaction (`session_before_compact`). */
@@ -16,10 +16,11 @@ export type CompactMode = "det" | "native";
 /** Footer status line: `full` adds the trigger gauge; `compact` shows the count and warnings only. */
 export type FooterFormat = "full" | "compact";
 
-export type KnobValue = number | CompactMode | FooterFormat | "on" | "off";
+export type KnobValue = number | CompactMode | FooterFormat | FoldMode | "on" | "off";
 
 /** Settings persisted by the /context-fold config menu (same keys in the JSON file). */
 export interface SavedSettings {
+	foldMode?: FoldMode;
 	foldAt?: number;
 	foldStep?: number;
 	coldFoldAt?: number;
@@ -92,8 +93,8 @@ export const KNOBS: readonly KnobSpec[] = [
 		key: "cacheExpiry",
 		env: "CONTEXTFOLD_CACHE_EXPIRY",
 		label: "Cache-expiry folding",
-		hint: "fold every eligible block outside the protected tail when the provider prompt-cache TTL has elapsed before a request",
-		def: "on",
+		hint: "fold eligible blocks when the provider prompt-cache TTL has elapsed and usage is past the fold threshold; aggressive mode skips the threshold",
+		def: "off",
 		choices: ["off", "on"],
 		live: true,
 		parse: (raw) => raw === "on" || raw === "off" ? raw : undefined,
@@ -110,10 +111,21 @@ export const KNOBS: readonly KnobSpec[] = [
 		format: autoOrNumber,
 	},
 	{
+		key: "foldMode",
+		env: "CONTEXTFOLD_FOLD_MODE",
+		label: "Fold mode",
+		hint: "standard sizes by the context window (a 1M window stays cap-driven); aggressive sizes by the fold budget, drops the cold step, and folds on expiry below the fold threshold",
+		def: LADDER_DEFAULTS.mode,
+		choices: ["standard", "aggressive"],
+		live: true,
+		parse: (raw) => raw === "standard" || raw === "aggressive" ? raw : undefined,
+		format: plain,
+	},
+	{
 		key: "foldAt",
 		env: "CONTEXTFOLD_FOLD_AT",
 		label: "Fold threshold",
-		hint: "first fold when usage reaches this fraction of the fold budget (0–1]",
+		hint: "first fold when usage reaches this fraction of the context window, or the fold budget in aggressive mode (0–1]",
 		def: LADDER_DEFAULTS.foldAt,
 		live: true,
 		parse: fraction,
@@ -123,7 +135,7 @@ export const KNOBS: readonly KnobSpec[] = [
 		key: "foldStep",
 		env: "CONTEXTFOLD_FOLD_STEP",
 		label: "Fold step",
-		hint: "a warm fold event must save at least this fraction of the fold budget (0–1]",
+		hint: "a warm fold event must save at least this fraction of the context window, or the fold budget in aggressive mode (0–1]",
 		def: LADDER_DEFAULTS.foldStep,
 		live: true,
 		parse: fraction,
@@ -133,7 +145,7 @@ export const KNOBS: readonly KnobSpec[] = [
 		key: "coldFoldAt",
 		env: "CONTEXTFOLD_COLD_FOLD_AT",
 		label: "Cold fold threshold",
-		hint: "first-fold threshold when no live cache read has been observed (0–1]",
+		hint: "first-fold threshold when no live cache read has been observed; aggressive mode drops its step requirement (0–1]",
 		def: LADDER_DEFAULTS.coldFoldAt,
 		live: true,
 		parse: fraction,
@@ -268,17 +280,18 @@ export function parseSavedSettings(json: unknown): SavedSettings {
 	return saved;
 }
 
-/** Pi's cache-warming setting; absent/unknown is treated as no warming. */
+/** Pi's cache-warming setting; absent/unknown is unknown, so expiry folding fails safe. */
 export function resolveCacheWarming(
 	ctx: { getSettings?: () => { cacheWarming?: unknown } | undefined } = {},
-): CacheWarmingMode {
+): CacheWarmingMode | null {
+	if (typeof ctx.getSettings !== "function") return null;
 	try {
-		const mode = ctx.getSettings?.()?.cacheWarming;
+		const mode = ctx.getSettings()?.cacheWarming;
 		if (mode === "off" || mode === "streaming" || mode === "idle") return mode;
 	} catch {
 		/* a settings read failure must not cost the turn */
 	}
-	return "off";
+	return null;
 }
 
 /** How the extension answers Pi's hard compaction, plus the other adapter-level settings. */
@@ -288,7 +301,7 @@ export interface AdapterConfig {
 	reconTokens: number;
 	compact: CompactMode;
 	footerFormat: FooterFormat;
-	/** Cache-expiry folding is opt-out; the TTL itself comes from the model or the override. */
+	/** Cache-expiry folding is opt-in; the TTL itself comes from the model or the override. */
 	cacheExpiry: "on" | "off";
 	/** Fallback prompt-cache lifetime in milliseconds; 0 means the model metadata must supply it. */
 	cacheTtlMs: number;
@@ -299,7 +312,7 @@ export const ADAPTER_DEFAULTS: AdapterConfig = {
 	reconTokens: 18_000,
 	compact: "det",
 	footerFormat: "full",
-	cacheExpiry: "on",
+	cacheExpiry: "off",
 	cacheTtlMs: 0,
 };
 
@@ -325,6 +338,7 @@ export function adapterConfigFromEnv(saved: SavedSettings = {}): AdapterConfig {
 		foldAt: resolveKnob(knob("foldAt"), saved).value as number,
 		foldStep: resolveKnob(knob("foldStep"), saved).value as number,
 		coldFoldAt: resolveKnob(knob("coldFoldAt"), saved).value as number,
+		mode: resolveKnob(knob("foldMode"), saved).value as FoldMode,
 	};
 	const reconTokens = resolveKnob(knob("reconTokens"), saved).value as number;
 	const compact = resolveKnob(knob("compact"), saved).value as CompactMode;

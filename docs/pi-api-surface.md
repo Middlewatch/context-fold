@@ -1,7 +1,7 @@
 # Pi extension API surface
 
-Context-fold requires Pi 1.2.0 or newer. This reference describes the contracts verified against
-1.2.0; the development dependency pins that version. Re-check `docs/extensions.md`,
+Context-fold requires Pi 0.87.1 or newer. This reference describes the contracts verified against
+0.87.1; the development dependency pins that version. Re-check `docs/extensions.md`,
 `docs/compaction.md`, `docs/session-format.md`, and the exported declarations in the installed
 `@earendil-works/pi-coding-agent` when updating it.
 
@@ -26,7 +26,7 @@ hook or author system prompts. Pi records structured changes before the next req
 string prompt is projected onto the leading system message by Pi and can invalidate the prefix
 regardless of context-fold.
 
-| Hook | Context-fold behavior | Pi 1.2.0 composition |
+| Hook | Context-fold behavior | Pi 0.87.1 composition |
 |---|---|---|
 | `context_with_system` | Substitute folded content; preserve system messages and positions | Chained after all ordinary `context` handlers |
 | `session_before_compact` | Return a deterministic summary and the supplied kept boundary | Last non-cancel result wins; cancellation short-circuits |
@@ -90,7 +90,7 @@ request-local folding design.
 | Pressure | `ctx.getContextUsage()` supplies `contextWindow` and nullable `tokens` |
 | Measured cache usage | Assistant `message.usage` on `message_end` |
 | Prompt-cache TTL | `ctx.model.promptCache.short` / `.long` |
-| Cache-warming mode | `pi.getSettings().cacheWarming` |
+| Cache-warming mode | `pi.getSettings().cacheWarming` (Pi ≥ 0.99.0; unknown disables expiry) |
 | Cache-warm activity | `sessionManager.getBranch()` usage entries |
 | Final idle boundary | `agent_settled`, after recovery and queued work |
 | Resume and navigation cache advisories | `session_start`, `session_tree`, `model_select`, `session_compact` |
@@ -101,6 +101,9 @@ request-local folding design.
 | Fold state persistence | `pi.appendEntry` with custom type `contextfold.fold` |
 | Session artifacts | `getSessionDir`, `getSessionId`, `getSessionFile` |
 | Handoff replacement session | Command-context `newSession({ parentSession, setup, withSession })` |
+
+The active-run gate for `streaming` cache warming is inferred from the transcript tail, not from a
+Pi contract. It only narrows when expiry folding is allowed; it does not control folding itself.
 
 Successful session replacement invalidates the old command context. Handoff captures plain data
 first and uses `withSession` for its success notification. A new session does not inherit recall

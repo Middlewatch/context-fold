@@ -15,7 +15,7 @@ export interface CacheExpiryInput {
 	model?: CacheModelMeta | null;
 	/** Fallback lifetime when the model declares no tier; 0/undefined = none. */
 	ttlOverrideMs?: number;
-	cacheWarming?: string | null;
+	cacheWarming?: CacheWarmingMode | null;
 	/** True inside a tool loop; streaming warming can keep the prefix warm then. */
 	activeRun?: boolean;
 }
@@ -61,6 +61,7 @@ export class CacheExpiryTracker {
 
 	evaluate(input: CacheExpiryInput): CacheExpiryDecision {
 		if (input.enabled === false) return off("cache-expiry folding is off");
+		if (input.cacheWarming == null) return off("cache warming is unknown; expiry disabled");
 		if (input.cacheWarming === "idle") return off("idle cache warming can keep the prefix warm between runs");
 		if (input.cacheWarming === "streaming" && input.activeRun) return off("streaming cache warming can keep the prefix warm during an active run");
 		const resolved = this.resolveTtl(input.model?.promptCache, input.ttlOverrideMs);

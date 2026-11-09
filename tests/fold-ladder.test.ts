@@ -11,6 +11,8 @@ import type { AgentMessage } from "../src/core/block";
 import type { FoldPolicy } from "../src/core/contract";
 import { user, assistantText, assistantWithCalls, bigResult, toolResult, isBalanced } from "./helpers";
 
+const AGGRESSIVE = { ...LADDER_DEFAULTS, mode: "aggressive" as const };
+
 function ladderEngine(cfg: Record<string, unknown> = {}, ladderCfg = LADDER_DEFAULTS) {
 	const policy = new FoldLadderPolicy(ladderCfg);
 	const e = new ContextFoldEngine(policy, { tailTarget: 100, ...cfg }, new MapFoldRegistry());
@@ -32,6 +34,16 @@ function session(n: number, linesEach = 400): { messages: AgentMessage[]; callId
 	}
 	messages.push(user("now the newest question"));
 	return { messages, callIds };
+}
+
+function expiryMessages(resultLines: number, brief = "read it"): AgentMessage[] {
+	return [
+		user(brief),
+		assistantWithCalls([{ id: "c0", name: "read" }]),
+		bigResult("c0", resultLines),
+		assistantText("done", "r1"),
+		user("go"),
+	];
 }
 
 function resultText(messages: AgentMessage[], callId: string): string {
@@ -60,7 +72,7 @@ describe("discrete fold events", () => {
 	it("below the first-fold threshold the context goes out untouched (append-only between events)", () => {
 		const { e, committed } = ladderEngine();
 		const { messages } = session(3); // ~15k live
-		const out = e.process(messages, { contextWindow: 80_000, tokens: null }); // ~15k live → ~0.25 of the 60k budget
+		const out = e.process(messages, { contextWindow: 80_000, tokens: null }); // ~0.19 of the window
 		expect(out).toBe(messages);
 		expect(committed.length).toBe(0);
 	});
@@ -79,7 +91,7 @@ describe("discrete fold events", () => {
 	it("crossing the threshold fires ONE fold event: observations mask, intent and actions stay", () => {
 		const { e, committed, events } = ladderEngine();
 		const { messages, callIds } = session(8); // ~39k live
-		const out = e.process(messages, { contextWindow: 80_000, tokens: null }); // ~39k live → ~0.65 of the 60k budget
+		const out = e.process(messages, { contextWindow: 80_000, tokens: null }); // ~0.49 ≥ 0.45
 
 		expect(committed.length).toBe(1);
 		expect(events.length).toBe(1);
@@ -142,8 +154,7 @@ describe("discrete fold events", () => {
 
 	it("step spacing: over the threshold but with too little maskable mass, no event fires", () => {
 		const { e, committed } = ladderEngine();
-		// A huge (unmaskable) user brief + one small observation: fraction ≥ 0.45 of the 60k
-		// budget, savings ≪ the 7.2k step.
+		// A huge (unmaskable) user brief + one small observation: fraction ≥ 0.45, savings ≪ step.
 		const messages: AgentMessage[] = [
 			user("brief: " + "requirements ".repeat(12_000)), // ~39k tokens of user intent
 			assistantWithCalls([{ id: "c0", name: "read" }]),
@@ -173,12 +184,12 @@ describe("discrete fold events", () => {
 
 	it("cold branch: with no live cache read there is no prefix to protect — folds from 25 %", () => {
 		const { e, policy, committed } = ladderEngine();
-		const { messages } = session(6); // ~29k live → ~0.39 of the 75k budget
+		const { messages } = session(6); // ~29k live → 0.29 of 100k
 		policy.setCold(true);
 		e.process(messages, { contextWindow: 100_000, tokens: null });
 		expect(committed.length).toBe(1);
 
-		// Same session, warm: 0.39 < 0.45 → no event.
+		// Same session, warm: 0.29 < 0.45 → no event.
 		const warm = ladderEngine();
 		warm.policy.setCold(false);
 		warm.e.process(session(6).messages, { contextWindow: 100_000, tokens: null });
@@ -257,38 +268,36 @@ describe("discrete fold events", () => {
 
 	it("provider-reported usage drives the fraction when present", () => {
 		const { e, committed } = ladderEngine();
-		const { messages } = session(8); // estimator says ~0.65 of the 60k budget
+		const { messages } = session(8); // estimator says ~0.49 of 80k
 		// Provider says the context is actually tiny — trust it, no fold.
 		const out = e.process(messages, { contextWindow: 80_000, tokens: 8_000 });
 		expect(out).toBe(messages);
 		expect(committed.length).toBe(0);
 	});
-	it("cache expiry folds every eligible block outside the tail, even below one step", () => {
-		const { e, policy, events } = ladderEngine();
-		const { messages, callIds } = session(6); // ~0.2 of the 150k budget
-		expect(e.process(messages, { contextWindow: 200_000, tokens: null })).toBe(messages);
-
+	it("standard expiry requires the usage threshold", () => {
+		const { e, policy, events } = ladderEngine({ tailTarget: 0 });
+		const messages = expiryMessages(300); // ~4k of 200k
 		policy.setExpired(true);
-		const out = e.process(messages, { contextWindow: 200_000, tokens: null });
-		expect(events).toHaveLength(1);
-		expect(events[0].trigger).toBe("expiry");
 
-		const folded = callIds.filter((id) => resultText(out, id).includes("FOLDED")).length;
-		expect(folded).toBeGreaterThan(0);
-		expect(folded).toBeLessThan(callIds.length);
-		// The newest result is first-delivery, so the hold rule keeps it even with a tiny tail.
-		expect(resultText(out, callIds.at(-1)!)).not.toContain("FOLDED");
+		const out = e.process(messages, { contextWindow: 200_000, tokens: null });
+		expect(out).toBe(messages);
+		expect(events).toHaveLength(0);
 	});
 
-	it("cache expiry folds an eligible block below one step when the prefix is gone", () => {
+	it("standard expiry waives the step but not the threshold", () => {
 		const { e, policy, events } = ladderEngine({ tailTarget: 0 });
-		const messages: AgentMessage[] = [
-			user("read it"),
-			assistantWithCalls([{ id: "c0", name: "read" }]),
-			bigResult("c0", 300), // ~4k — below the 18k step but above the 2k floor
-			assistantText("done", "r1"),
-			user("go"),
-		];
+		const messages = expiryMessages(300, "brief: " + "requirements ".repeat(15_000)); // ~49k, past 45%
+		policy.setExpired(true);
+
+		const out = e.process(messages, { contextWindow: 100_000, tokens: null });
+		expect(events).toHaveLength(1);
+		expect(events[0].trigger).toBe("expiry");
+		expect(resultText(out, "c0")).toContain("FOLDED");
+	});
+
+	it("aggressive expiry folds below the threshold and one step", () => {
+		const { e, policy, events } = ladderEngine({ tailTarget: 0 }, AGGRESSIVE);
+		const messages = expiryMessages(300); // ~4k — below the 18k step but above the 2k floor
 		policy.setExpired(true);
 
 		const out = e.process(messages, { contextWindow: 200_000, tokens: null });
@@ -297,15 +306,9 @@ describe("discrete fold events", () => {
 		expect(resultText(out, "c0")).toContain("FOLDED");
 	});
 
-	it("cache expiry still skips a trivial fold below the floor", () => {
-		const { e, policy, events } = ladderEngine({ tailTarget: 0 });
-		const messages: AgentMessage[] = [
-			user("read it"),
-			assistantWithCalls([{ id: "c0", name: "read" }]),
-			bigResult("c0", 10), // ~125 — below the 2k floor
-			assistantText("done", "r1"),
-			user("go"),
-		];
+	it("aggressive expiry still skips a trivial fold below the floor", () => {
+		const { e, policy, events } = ladderEngine({ tailTarget: 0 }, AGGRESSIVE);
+		const messages = expiryMessages(10); // ~125 — below the 2k floor
 		policy.setExpired(true);
 
 		const out = e.process(messages, { contextWindow: 200_000, tokens: null });
@@ -313,19 +316,68 @@ describe("discrete fold events", () => {
 		expect(events).toHaveLength(0);
 	});
 
-	it("a 1M window uses the 200k budget, not the raw window", () => {
-		const cold = ladderEngine();
+	it("aggressive expiry folds every eligible block and holds the newest result", () => {
+		const { e, policy, events } = ladderEngine({}, AGGRESSIVE);
+		const { messages, callIds } = session(6);
+		policy.setExpired(true);
+
+		const out = e.process(messages, { contextWindow: 200_000, tokens: null });
+		expect(events).toHaveLength(1);
+		expect(events[0].trigger).toBe("expiry");
+		const folded = callIds.filter((id) => resultText(out, id).includes("FOLDED")).length;
+		expect(folded).toBeGreaterThan(0);
+		expect(folded).toBeLessThan(callIds.length);
+		expect(resultText(out, callIds.at(-1)!)).not.toContain("FOLDED");
+	});
+
+	it("aggressive mode sizes a 1M window by the budget", () => {
+		const cold = ladderEngine({}, AGGRESSIVE);
 		cold.policy.setCold(true);
 		cold.e.process(session(11).messages, { contextWindow: 1_000_000, tokens: null }); // ~55k ≥ 25% of 200k
 		expect(cold.committed.length).toBe(1);
 
-		const warm = ladderEngine();
+		const warm = ladderEngine({}, AGGRESSIVE);
 		warm.e.process(session(11).messages, { contextWindow: 1_000_000, tokens: null });
 		expect(warm.committed.length).toBe(0); // 55k < 45% of 200k
 
-		const over = ladderEngine();
+		const over = ladderEngine({}, AGGRESSIVE);
 		over.e.process(session(19).messages, { contextWindow: 1_000_000, tokens: null }); // ~95k ≥ 45% of 200k
 		expect(over.committed.length).toBe(1);
+	});
+
+	it("standard mode on a 1M window stays cap-driven", () => {
+		const cold = ladderEngine();
+		cold.policy.setCold(true);
+		cold.e.process(session(11).messages, { contextWindow: 1_000_000, tokens: null }); // ~55k < 25% of 1M
+		expect(cold.committed.length).toBe(0);
+
+		const warm = ladderEngine();
+		warm.e.process(session(19).messages, { contextWindow: 1_000_000, tokens: null }); // ~95k < 45% of 1M
+		expect(warm.committed.length).toBe(0);
+
+		const over = ladderEngine();
+		over.e.process(session(19).messages, { contextWindow: 1_000_000, tokens: 250_000 }); // past the 200k cap
+		expect(over.committed.length).toBe(1);
+		expect(over.events[0].trigger).toBe("cap");
+	});
+
+	it("aggressive cold branch drops the full-step requirement", () => {
+		const messages: AgentMessage[] = [
+			user("brief: " + "requirements ".repeat(7_000)), // ~21k, past 25%
+			assistantWithCalls([{ id: "c0", name: "read" }]),
+			bigResult("c0", 300), // ~4k — below the 9.6k step but above the 2k floor
+			assistantText("done", "r1"),
+			user("go"),
+		];
+		const standard = ladderEngine();
+		standard.policy.setCold(true);
+		standard.e.process(messages, { contextWindow: 80_000, tokens: null });
+		expect(standard.committed.length).toBe(0);
+
+		const aggressive = ladderEngine({}, AGGRESSIVE);
+		aggressive.policy.setCold(true);
+		aggressive.e.process(messages, { contextWindow: 80_000, tokens: null });
+		expect(aggressive.committed.length).toBe(1);
 	});
 
 	it("a tiny window scales the budget down instead of dividing by zero", () => {

@@ -8,7 +8,7 @@ Long agentic sessions stay under budget by folding stale content (mostly long ch
 calls) out of the model's view. Every fold is reversible, indexed, and computed without a model
 call. Built for Pi and supported on Pi only.
 
-**Requirements:** Node ≥ 22.19.0 and Pi ≥ 1.2.0.
+**Requirements:** Node ≥ 22.19.0 and Pi ≥ 0.87.1.
 
 ```bash
 pi install npm:context-fold
@@ -45,10 +45,9 @@ why every fold emits a deterministic index of exact tokens rather than a paraphr
 
 ## The system in short
 
-**1. Per-turn: the fold ladder.** Once usage crosses ~45 % of the fold budget
-(`min(200k, 0.75 × window)`), a fold event masks stale `tool_result` and `thinking` blocks. User
-intent, assistant conclusions, and the record of every action are never touched. Fresh tool results
-are always delivered in full at least once.
+**1. Per-turn: the fold ladder.** Once usage crosses ~45 % of the context window, a fold event
+masks stale `tool_result` and `thinking` blocks. User intent, assistant conclusions, and the record
+of every action are never touched. Fresh tool results are always delivered in full at least once.
 
 **2. The floor.** Eventually no more tool calls can be masked. At that point context-fold says so
 rather than churning. What remains is the irreducible floor, and it cannot compress past it.
@@ -84,13 +83,18 @@ headless) and the flow stays write, review, `/new`, paste.
 Between fold events the context is append-only. Rewriting history invalidates the provider's
 prompt-cache suffix, so mutations are batched at points where that cost is paid once:
 
-- First fold when usage crosses ~45 % of the fold budget (25 % when telemetry shows the session
-  has never had a live cache read, since there is no warm prefix worth protecting). The budget is
-  `min(200k, 0.75 × window)`, so a 1M-window model does not get a 1M-relative threshold.
-- Cache expiry is a separate trigger: before a request, if the model-declared prompt-cache TTL has
-  elapsed, fold every eligible block outside the protected tail (floor min(2k, one step)), even
-  below the normal usage threshold. `CONTEXTFOLD_CACHE_EXPIRY=off` disables it. Pi's `idle`
-  cache warming gates it off; `streaming` warming gates it only inside an active tool loop.
+- First fold when usage crosses ~45 % of the context window (25 % when telemetry shows the session
+  has never had a live cache read, since there is no warm prefix worth protecting).
+- Cache expiry is an opt-in separate trigger: before a request, if the model-declared prompt-cache
+  TTL has elapsed, fold every eligible block outside the protected tail (floor min(2k, one step))
+  once usage is past the first-fold threshold. `CONTEXTFOLD_CACHE_EXPIRY=on` enables it. Pi's
+  `idle` cache warming gates it off; `streaming` warming gates it only inside an active tool
+  loop. On Pi before 0.99.0 the warming mode is unknown, so expiry stays off. To make expiry fold
+  earlier, lower `CONTEXTFOLD_FOLD_AT` and `CONTEXTFOLD_FOLD_STEP`; a never-warm session uses
+  `CONTEXTFOLD_COLD_FOLD_AT`.
+- `CONTEXTFOLD_FOLD_MODE=aggressive` sizes the thresholds and step by the fold budget
+  (`min(200k, 0.75 × window)`), drops the cold step requirement, and lets expiry fold below the
+  usage threshold. It is opt-in; the default is `standard`.
 - A model that declares no `promptCache` (many OpenAI-compatible routes) needs a TTL from its
   `models.json` entry or `CONTEXTFOLD_CACHE_TTL_MS`. Set it conservatively long: a false expiry
   rewrites a warm prefix and pays full input on the next request, which costs more than a missed
@@ -99,8 +103,8 @@ prompt-cache suffix, so mutations are batched at points where that cost is paid 
   deterministic digests, keeping detected risk lines verbatim, and commits them as a *frozen layer*
   whose bytes never change again. The context head stays byte-identical turn over turn, which is
   what keeps prefix caches warm.
-- Each further warm event needs at least a ladder step (~12 % of the budget) of maskable mass.
-  Crossing the absolute budget cap folds immediately.
+- Every warm fold event, including the first, needs at least a ladder step (~12 % of the window)
+  of maskable mass. Crossing the absolute budget cap folds immediately.
 
 ### What folds and what doesn't
 
@@ -208,18 +212,17 @@ append-only session file even once the raw message has left live context.
   the first response after a fold. The notice appears at most once per cold streak and reports
   input already processed. Interactive notices use Pi's renderer; headless notices use stderr.
 - **`/context-fold` menu**: choose **Status**, **Settings**, or **Discard retained images**.
-  Escape or **Close** dismisses it. Status shows fold position (usage % of the budget, the next-fold gauge),
+  Escape or **Close** dismisses it. Status shows fold position (usage %, the next-fold gauge),
   cache hit ratios, and advisory flags: folds committed but not observed on the wire, a second
   forced compaction, irreducible context past half the window, cold with a large carry, and recall
   churn. See [Configuration](#configuration) for settings.
 - **Footer status line (TUI)**: a persistent one-line summary in Pi's footer (`⧉ context-fold ×3
-  · ~41k masked · next fold 3.1k/7.2k`), updated as fold events fire. The line is purely visual.
+  · ~41k masked · next fold 3.1k/9.6k`), updated as fold events fire. The line is purely visual.
   It adds nothing to the transcript or the model's context and leaves headless modes unaffected.
   The last segment is the ladder's trigger gauge, showing whichever fold condition is actually
-  binding. Below the entry threshold it names it (`next fold at 45%` of the budget); once usage is
-  past the
+  binding. Below the entry threshold it names it (`next fold at 45%`); once usage is past the
   threshold, which is permanent from then on, it tracks maskable mass toward the next fold step
-  (`next fold 3.1k/7.2k`, counting up from 0 right after a fold as new observations land).
+  (`next fold 3.1k/9.6k`, counting up from 0 right after a fold as new observations land).
   `⚠ over budget` appears only in the terminal state where the irreducible tail and roots exceed
   the budget and no further fold is possible. Footers that stack every extension's status on one
   row can still wrap in a narrow pane: `CONTEXTFOLD_FOOTER_FORMAT=compact` (or the Footer format
@@ -319,7 +322,7 @@ extension. Context-fold watches provider usage for that outcome. Known interacti
 - **`codex-lite` does not rewrite context.** Its dialect mode replaces Pi's stock tools and appends
   prompt guidance. There is no fold bypass in that pairing; fresh shell output reaches the model
   before it can age into a ladder fold. Focused shell commands still reduce context growth.
-- **Pi chains two context-transform phases.** Context-fold uses `context_with_system`
+- **Pi 0.87.1 chains two context-transform phases.** Context-fold uses `context_with_system`
   and preserves system messages and tool declarations in place. The ordinary `context` hook
   collapses system patches when a handler replaces message objects, which would invalidate the
   prefix on later prompt changes. Other extensions and providers can still collapse that prefix.
@@ -365,13 +368,14 @@ shadowing when it applies.
 | Var | Default | Meaning |
 |---|---|---|
 | `CONTEXTFOLD` | _(on)_ | Master kill switch: `0`/`off` = the extension registers nothing this session. |
-| `CONTEXTFOLD_FOLD_AT` | `0.45` | First fold when usage ≥ this fraction of the fold budget. |
-| `CONTEXTFOLD_FOLD_STEP` | `0.12` | A warm fold event must save at least this fraction of the budget (spaces events). |
-| `CONTEXTFOLD_COLD_FOLD_AT` | `0.25` | First-fold threshold (fraction of the budget) when no live cache read has ever been observed. |
+| `CONTEXTFOLD_FOLD_MODE` | `standard` | `standard` sizes by the context window; `aggressive` sizes by the fold budget, drops the cold step, and folds on expiry below the fold threshold. |
+| `CONTEXTFOLD_FOLD_AT` | `0.45` | First fold when usage ≥ this fraction of the context window (or the fold budget in aggressive mode). |
+| `CONTEXTFOLD_FOLD_STEP` | `0.12` | A warm fold event must save at least this fraction of the window (or the budget in aggressive mode; spaces events). |
+| `CONTEXTFOLD_COLD_FOLD_AT` | `0.25` | First-fold threshold when no live cache read has ever been observed. |
 | `CONTEXTFOLD_BUDGET_FRACTION` | `0.75` | Budget = this fraction of the context window… |
 | `CONTEXTFOLD_BUDGET_CAP` | `200000` | …capped at this absolute ceiling (attention degrades at absolute depth). `0`/`off` disables. |
 | `CONTEXTFOLD_TAIL` | `20000` | Protected-tail target: the newest ~N tokens never fold (clamped to half the budget). |
-| `CONTEXTFOLD_CACHE_EXPIRY` | `on` | Fold every eligible block outside the protected tail when the model-declared prompt-cache TTL has elapsed before a request. |
+| `CONTEXTFOLD_CACHE_EXPIRY` | `off` | Fold eligible blocks outside the protected tail when the model-declared prompt-cache TTL has elapsed before a request. |
 | `CONTEXTFOLD_CACHE_TTL_MS` | `0` | Fallback TTL when the model declares none; `0`/`auto` uses model metadata. Set it long: a short value folds warm caches. |
 | `CONTEXTFOLD_COMPACT` | `det` | Hard-compaction answer: `det` = deterministic seed-index summary; `native` = Pi stock. |
 | `CONTEXTFOLD_FOOTER_FORMAT` | `full` | Footer status line: `full` = count, masked tokens, and the trigger gauge; `compact` = count and warnings only. |
@@ -421,7 +425,7 @@ resubmission, and image preservation through the provider boundary in a 48-colum
 It uses a local throwing fixture provider, makes no network request, and prints the directory
 containing its screen captures.
 
-The unit suite also exercises Pi 1.2.0's real extension runner and session projection without
+The unit suite also exercises Pi 0.87.1's real extension runner and session projection without
 provider calls, including system patches, content edits, recovery cuts, and revision recall.
 
 The live scripts drive real Pi sessions against a real provider, so they cost money and need
