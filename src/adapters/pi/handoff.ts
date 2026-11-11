@@ -41,7 +41,7 @@ export function buildHandoffSeed(opts: { goal: string; indexBody: string; at: st
 
 interface HandoffCtx {
 	hasUI?: boolean;
-	cwd?: string;
+	cwd: string;
 	ui?: {
 		notify?(msg: string, level?: string): void;
 		confirm?(title: string, message: string): Promise<boolean>;

@@ -211,7 +211,7 @@ export default function contextFold(pi: ExtensionAPI): void {
 	// relative `sessionDir` setting); then it falls back under the agent dir so a normal session
 	// never dirties the tree with untracked artifacts.
 	interface ArtifactCtx {
-		cwd?: string;
+		cwd: string;
 		sessionManager: { getSessionDir(): string; getSessionId(): string };
 	}
 	const artifactDirFor = (ctx: ArtifactCtx): string =>

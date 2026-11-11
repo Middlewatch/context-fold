@@ -97,7 +97,7 @@ function ctxFor(
 		statuses,
 		ctx: {
 			model: opts.model ?? { id: "test-model", provider: "test" },
-			...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
+			cwd: opts.cwd ?? "/repo",
 			sessionManager: {
 				getSessionDir: () => dir,
 				getSessionId: () => opts.sessionId ?? "s1",
@@ -1135,6 +1135,7 @@ describe.skipIf(!PI_PRESENT)("/fold-handoff confirm-then-switch", () => {
 		};
 		const ctx = {
 			hasUI: opts.hasUI,
+			cwd: "/repo",
 			sessionManager: {
 				getSessionDir: () => dir,
 				getSessionId: () => "s1",
@@ -1250,6 +1251,7 @@ describe.skipIf(!PI_PRESENT)("/fold-handoff confirm-then-switch", () => {
 		const notices: string[] = [];
 		const ctx = {
 			hasUI: true,
+			cwd: "/repo",
 			sessionManager: {
 				getSessionDir: () => dir,
 				getSessionId: () => "s1",

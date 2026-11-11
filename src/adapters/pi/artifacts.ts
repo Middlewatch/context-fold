@@ -1,15 +1,7 @@
 /*
- * artifacts.ts — where the seed index and handoff seeds live.
- *
- * Pi normally keeps session files under `<agentDir>/sessions`, and artifacts sit beside them in
- * `<sessionDir>/context-fold/<sessionId>/`. A host can point Pi's session dir at the workspace
- * itself (`--session-dir .`, or a relative `sessionDir` in settings), which would leave untracked
- * files in the user's tree. Artifacts therefore never land inside the workspace: when the session
- * dir is the workspace or a subdirectory of it, they fall back to Pi's own default session layout,
- * `<agentDir>/sessions/<encoded sessionDir>/context-fold/<sessionId>/`. The encoded directory keeps
- * same-id sessions in different workspaces apart.
- *
- * Pure path logic. The caller supplies every root, so the rule is testable without touching disk.
+ * Where the seed index and handoff seeds live. A session dir inside the workspace (including an
+ * in-memory session's empty one) would leave an untracked `context-fold/` in the user's tree, so
+ * those sessions fall back under the agent dir.
  */
 import { isAbsolute, join, relative, resolve } from "node:path";
 
@@ -24,15 +16,19 @@ function encodeSessionDir(sessionDir: string): string {
 	return `--${resolve(sessionDir).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
-export function resolveArtifactDir(input: {
+export function resolveArtifactDir({
+	sessionDir,
+	sessionId,
+	agentDir,
+	cwd,
+}: {
 	sessionDir: string;
 	sessionId: string;
 	agentDir: string;
-	cwd?: string;
+	cwd: string;
 }): string {
-	const root =
-		input.cwd && isWithin(input.cwd, input.sessionDir)
-			? join(input.agentDir, "sessions", encodeSessionDir(input.sessionDir), "context-fold")
-			: join(input.sessionDir, "context-fold");
-	return join(root, input.sessionId);
+	const dir = resolve(cwd, sessionDir);
+	return isWithin(cwd, dir)
+		? join(agentDir, "sessions", encodeSessionDir(dir), "context-fold", sessionId)
+		: join(dir, "context-fold", sessionId);
 }
