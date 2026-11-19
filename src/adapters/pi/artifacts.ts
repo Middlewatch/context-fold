@@ -1,7 +1,9 @@
 /*
  * Where the seed index and handoff seeds live. A session dir inside the workspace (including an
  * in-memory session's empty one) would leave an untracked `context-fold/` in the user's tree, so
- * those sessions fall back under the agent dir.
+ * those sessions fall back under the agent dir. A session dir already under the agent dir stays
+ * put: a workspace that contains the agent dir (Pi run from the home directory) holds the default
+ * session dir too, and moving it would split artifacts from their session files.
  */
 import { isAbsolute, join, relative, resolve } from "node:path";
 
@@ -28,7 +30,7 @@ export function resolveArtifactDir({
 	cwd: string;
 }): string {
 	const dir = resolve(cwd, sessionDir);
-	return isWithin(cwd, dir)
+	return isWithin(cwd, dir) && !isWithin(agentDir, dir)
 		? join(agentDir, "sessions", encodeSessionDir(dir), "context-fold", sessionId)
 		: join(dir, "context-fold", sessionId);
 }

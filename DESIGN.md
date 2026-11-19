@@ -206,7 +206,8 @@ The extension's own on-disk artifacts, the seed index and handoff seeds, live in
 retained like Pi's own session files, with no garbage collection. A session dir inside the
 workspace (`--session-dir .`, or a relative `sessionDir`) would leave untracked files in the tree,
 so those sessions fall back to Pi's own default session layout,
-`<agentDir>/sessions/<encoded sessionDir>/context-fold/<sessionId>/`.
+`<agentDir>/sessions/<encoded sessionDir>/context-fold/<sessionId>/`. A session dir already under
+the agent dir never moves, even when the workspace contains the agent dir.
 
 ---
 

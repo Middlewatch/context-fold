@@ -53,6 +53,18 @@ const placements = [
 		cwd: "/home/user/repo",
 		expected: "/home/user/context-fold/s1",
 	},
+	{
+		name: "keeps the default session dir when the workspace contains the agent dir",
+		sessionDir: "/home/user/.pi/agent/sessions/--home-user--",
+		cwd: "/home/user",
+		expected: "/home/user/.pi/agent/sessions/--home-user--/context-fold/s1",
+	},
+	{
+		name: "puts an in-memory session beside that default dir",
+		sessionDir: "",
+		cwd: "/home/user",
+		expected: "/home/user/.pi/agent/sessions/--home-user--/context-fold/s1",
+	},
 ];
 
 describe("artifact placement", () => {

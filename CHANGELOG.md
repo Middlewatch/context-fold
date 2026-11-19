@@ -3,6 +3,18 @@ Note: This is largely LLM written, I won't hand write much in here unless I have
 
 Notable changes to context-fold.
 
+## Unreleased
+
+### Fixed
+
+- Keep seed-index and handoff artifacts out of the workspace when Pi's session dir is the workspace
+  or a subdirectory of it (`--session-dir .`, or a relative `sessionDir`). Those sessions now write
+  under Pi's default session layout in the agent dir instead of leaving an untracked `context-fold/`
+  directory beside the user's files. An in-memory session (`--no-session`, used by hosts for
+  internal turns) reports an empty session dir and takes the same fallback. A session dir already
+  under the agent dir never moves, so running Pi from the home directory keeps artifacts beside
+  the session files. Contributed by @gytis-ivaskevicius (#3).
+
 ## 0.8.0 - 2026-11-09
 
 Minor bump because the seed-index `trigger` field gains a value (see RELEASING.md). Fold timing is
@@ -40,14 +52,6 @@ Documentation-only patch release.
 - Working specs under `docs/specs/` no longer ship in the package; `ISSUES.md` is removed.
 - `RELEASING.md` lists all three live scripts and `index.ts` in the files allowlist. `DESIGN.md`
   rewraps one paragraph and places the cache-risk subsection inside section 7.
-
-### Fixed
-
-- Keep seed-index and handoff artifacts out of the workspace when Pi's session dir is the workspace
-  or a subdirectory of it (`--session-dir .`, or a relative `sessionDir`). Those sessions now write
-  under Pi's default session layout in the agent dir instead of leaving an untracked `context-fold/`
-  directory beside the user's files. An in-memory session (`--no-session`, used by hosts for
-  internal turns) reports an empty session dir and takes the same fallback.
 
 ## 0.7.0 - 2026-10-13
 

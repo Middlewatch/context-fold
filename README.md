@@ -147,9 +147,10 @@ commands run, error lines in every spelling the lexicon knows (lowercase `failed
 …), exact identifiers and numbers harvested from the masked output, first lines of user
 messages, and recovery spans naming each folded block's ledger anchor, extent, and fold-time
 sha256. Extraction uses pure regex and produces byte-identical output for the same input. If the
-session dir is inside the workspace (for example `--session-dir .`), the root moves to Pi's own
-default layout, `<agentDir>/sessions/<encoded session dir>/context-fold/<sessionId>/`, so folding
-never leaves untracked files in the tree.
+session dir is inside the workspace and outside the agent dir (for example `--session-dir .`), the
+root moves to Pi's own default layout,
+`<agentDir>/sessions/<encoded session dir>/context-fold/<sessionId>/`, so folding never leaves
+untracked files in the tree.
 
 ### Starting fresh with the seed index
 
