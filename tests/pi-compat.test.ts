@@ -45,6 +45,7 @@ function load(sm: SessionManager) {
 		appendEntry: (type: string, data: unknown) => sm.appendCustomEntry(type, data),
 	} as never);
 	const ctx = {
+		cwd: "/repo",
 		sessionManager: sm,
 		getContextUsage: () => ({ contextWindow: 16_000, tokens: 15_000 }),
 		ui: { setStatus: () => {}, notify: () => {} },

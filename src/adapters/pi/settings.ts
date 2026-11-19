@@ -20,10 +20,14 @@ import {
 	type SavedSettings,
 } from "./config";
 
-export function settingsFilePath(): string {
+/** Mirrors Pi's own agent-dir resolution (PI_CODING_AGENT_DIR, else ~/.pi/agent). */
+export function agentDirPath(): string {
 	const env = process.env.PI_CODING_AGENT_DIR?.trim();
-	const dir = env ? (env.startsWith("~/") ? join(homedir(), env.slice(2)) : env) : join(homedir(), ".pi", "agent");
-	return join(dir, "context-fold.json");
+	return env ? (env.startsWith("~/") ? join(homedir(), env.slice(2)) : env) : join(homedir(), ".pi", "agent");
+}
+
+export function settingsFilePath(): string {
+	return join(agentDirPath(), "context-fold.json");
 }
 
 /** Missing, unreadable, or corrupt file → {} (fail-open). */

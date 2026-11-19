@@ -41,6 +41,14 @@ Documentation-only patch release.
 - `RELEASING.md` lists all three live scripts and `index.ts` in the files allowlist. `DESIGN.md`
   rewraps one paragraph and places the cache-risk subsection inside section 7.
 
+### Fixed
+
+- Keep seed-index and handoff artifacts out of the workspace when Pi's session dir is the workspace
+  or a subdirectory of it (`--session-dir .`, or a relative `sessionDir`). Those sessions now write
+  under Pi's default session layout in the agent dir instead of leaving an untracked `context-fold/`
+  directory beside the user's files. An in-memory session (`--no-session`, used by hosts for
+  internal turns) reports an empty session dir and takes the same fallback.
+
 ## 0.7.0 - 2026-10-13
 
 Minor bump because fold timing changes for one provider (see RELEASING.md).
